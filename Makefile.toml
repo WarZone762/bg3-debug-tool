@@ -1,0 +1,40 @@
+env_files = [{ path = "./.env" }]
+
+[env]
+PROFILE_NAME = "dev"
+BUILD_TYPE = "debug"
+
+[env.production]
+PROFILE_NAME = "release"
+BUILD_TYPE = "release"
+
+[tasks.clean]
+command = "cargo"
+args = ["clean"]
+
+[tasks.build]
+command = "cargo"
+args = ["build", "--profile=${PROFILE_NAME}"]
+
+[tasks.test]
+command = "cargo"
+args = ["test"]
+
+[tasks.copy]
+command = "cp"
+args = [
+    "-v",
+    "./target/x86_64-pc-windows-msvc/${BUILD_TYPE}/bg3se_rs.dll",
+    "${GAME_PATH}/bin/DWrite.dll",
+]
+dependencies = ["build"]
+
+[tasks.run]
+command = "steam"
+args = ["-applaunch", "1086940"]
+dependencies = ["copy"]
+
+[tasks.attach]
+command = "socat"
+args = ["tcp4:127.0.0.1:9003,reuseaddr,forever", "-"]
+dependencies = ["run"]

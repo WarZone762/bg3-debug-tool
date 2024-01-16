@@ -25,6 +25,38 @@ use windows::{
     },
 };
 
+// use autocxx::prelude::*;
+//
+// include_cpp! {
+//     #include "/hdd1/user/doc/vm/Windows 10 IoT Enterprise LTSC VM/Shared/bg3se/BG3Extender/GameDefinitions/Symbols.h"
+//     safety!(unsafe)
+//
+//     generate!("bg3se::ecl::GameState")
+//     generate!("bg3se::esv::GameState")
+//
+//     // concrete!("std::optional<bg3se::ecl::GameState>", O1)
+//     // concrete!("std::optional<bg3se::esv::GameState>", O2)
+//
+//     generate!("bg3se::StaticSymbols")
+// }
+//
+// #[no_mangle]
+// unsafe extern "C" {
+//     fn GetStaticSymbols() -> &'static mut ffi::bg3se::StaticSymbols;
+// }
+
+// #[cxx::bridge(namespace = "bg3se")]
+// mod ffi {
+//     unsafe extern "C++" {
+//         include!("/hdd1/user/doc/vm/Windows 10 IoT Enterprise LTSC VM/Shared/bg3se/BG3Extender/GameDefinitions/Symbols.h");
+//
+//         type StaticSymbols;
+//         fn GetClientState(self: &StaticSymbols) -> Foo;
+//         fn GetServerState(self: &StaticSymbols) -> Foo;
+//         fn GetStaticSymbols() -> &'static StaticSymbols;
+//     }
+// }
+
 extern "C" {
     pub fn freopen_s(
         stream: *mut *mut FILE,
@@ -32,6 +64,7 @@ extern "C" {
         mode: *const c_char,
         old_stream: *mut FILE,
     ) -> c_int;
+
     pub fn __acrt_iob_func(_lx: c_uint) -> *mut FILE;
 }
 
@@ -76,7 +109,7 @@ impl From<std::str::Utf8Error> for Error {
 pub type Result<T> = std::result::Result<T, Error>;
 
 #[macro_export]
-macro_rules! debug {
+macro_rules! _debug {
     ($type:expr, $($args:expr),*) => {
         unsafe {
             if let Some(x) = &mut CONSOLE {
@@ -89,28 +122,28 @@ macro_rules! debug {
 #[macro_export]
 macro_rules! DEBUG {
     ($($args:expr),*) => {
-        debug!(DebugMessageType::Debug, $($args),*)
+        _debug!(DebugMessageType::Debug, $($args),*)
     };
 }
 
 #[macro_export]
 macro_rules! INFO {
     ($($args:expr),*) => {
-        debug!(DebugMessageType::Info, $($args),*)
+        _debug!(DebugMessageType::Info, $($args),*)
     };
 }
 
 #[macro_export]
 macro_rules! WARN {
     ($($args:expr),*) => {
-        debug!(DebugMessageType::Warning, $($args),*)
+        _debug!(DebugMessageType::Warning, $($args),*)
     };
 }
 
 #[macro_export]
 macro_rules! ERR {
     ($($args:expr),*) => {
-        debug!(DebugMessageType::Err, $($args),*)
+        _debug!(DebugMessageType::Err, $($args),*)
     };
 }
 
@@ -290,6 +323,12 @@ impl DebugConsole {
     }
 
     fn submit_task_and_wait<T>(&self, server: bool, task: impl Fn() -> T) {
+        // let state = unsafe { GetStaticSymbols() };
+        // let client_state = state.GetClientState();
+        // let server_state = state.GetServerState();
+        //
+        // println!("{client_state:#X}, {server_state:#X}");
+
         if server {
             match static_symbols().server_state() {
                 None => ERR!(
@@ -622,13 +661,13 @@ unsafe extern "C" fn ConsoleSetLogCallback(_id: usize, callback: extern "C" fn(*
     }
 }
 
-#[cfg(test)]
-mod tests {
-    #![allow(unused_imports)]
-    use super::*;
-
-    #[test]
-    fn it_works() {
-        assert_eq!(2, 2);
-    }
-}
+// #[cfg(test)]
+// mod tests {
+//     #![allow(unused_imports)]
+//     use super::*;
+//
+//     #[test]
+//     fn it_works() {
+//         assert_eq!(2, 2);
+//     }
+// }

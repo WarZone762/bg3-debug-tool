@@ -1,2 +1,15 @@
 [build]
 target = "x86_64-pc-windows-msvc"
+
+[target.x86_64-pc-windows-msvc]
+linker = "lld-link"
+rustflags = [
+    "-L",
+    ".xwin/crt/lib/x86_64",
+    "-L",
+    ".xwin/sdk/lib/ucrt/x86_64",
+    "-L",
+    ".xwin/sdk/lib/um/x86_64",
+    "-L",
+    "third-party",
+]
