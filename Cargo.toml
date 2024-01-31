@@ -22,9 +22,10 @@ debug = []
 [dependencies]
 build-time = "0.1"
 libc = "0.2"
-quick-xml = { version = "0.31.0", features = ["serialize"] }
-serde = { version = "1.0.193", features = ["derive"] }
-uuid = "1.6.1"
+quick-xml = { version = "0.31", features = ["serialize"] }
+serde = { version = "1.0", features = ["derive"] }
+syn = { version = "2.0", features = ["extra-traits", "full"] }
+uuid = "1.6"
 widestring = "1.0"
 windows = { version = "0.52", features = [
     "Win32_Foundation",

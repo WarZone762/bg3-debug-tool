@@ -931,18 +931,3 @@ pub(crate) mod xml {
         Absolute,
     }
 }
-
-#[cfg(test)]
-mod test {
-    use super::*;
-
-    #[test]
-    fn parse_mappings() {
-        let mappings: xml::BinaryMappings = quick_xml::de::from_str(
-            &std::fs::read_to_string("bg3se/BG3Extender/GameHooks/BinaryMappings.xml").unwrap(),
-        )
-        .unwrap();
-
-        println!("{mappings:#?}");
-    }
-}

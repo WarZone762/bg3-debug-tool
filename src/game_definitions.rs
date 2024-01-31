@@ -3,7 +3,7 @@ use std::{alloc, ffi::CStr, fmt::Debug};
 #[derive(Debug)]
 #[repr(C)]
 pub(crate) struct OsiArgumentDesc {
-    next_param: *mut Self,
+    pub next_param: *mut Self,
     pub value: OsiArgumentValue,
 }
 
@@ -31,30 +31,48 @@ impl OsiArgumentDesc {
 
 #[repr(C)]
 pub(crate) struct OsiArgumentValue {
-    value: OsiArgumentValueUnion,
-    value_type: TypeId,
+    pub value: OsiArgumentValueUnion,
+    pub type_id: ValueType,
     unknown: bool,
 }
 
 impl Debug for OsiArgumentValue {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let value = match self.value_type {
-            TypeId::None => "None".into(),
-            TypeId::Integer => unsafe { self.value.int32.to_string() },
-            TypeId::Integer64 => unsafe { self.value.int64.to_string() },
-            TypeId::Real => unsafe { self.value.float.to_string() },
-            TypeId::String => {
-                unsafe { CStr::from_ptr(self.value.string as _).to_str().unwrap() }.to_string()
-            }
-            TypeId::GuidString => {
-                unsafe { CStr::from_ptr(self.value.string as _).to_str().unwrap() }.to_string()
-            }
-            TypeId::Undefined => "Undefined".into(),
+        let value = match self.type_id {
+            ValueType::None => "None".into(),
+            ValueType::Integer => unsafe { format!("Integer({})", self.value.int32) },
+            ValueType::Integer64 => unsafe { format!("Integer64({})", self.value.int64) },
+            ValueType::Real => unsafe { format!("Real({})", self.value.float) },
+            ValueType::String => unsafe {
+                format!(
+                    "String({})",
+                    CStr::from_ptr(self.value.string as _).to_str().unwrap()
+                )
+            },
+            ValueType::GuidString => unsafe {
+                format!(
+                    "GuidString({})",
+                    CStr::from_ptr(self.value.string as _).to_str().unwrap()
+                )
+            },
+            ValueType::CharacterGuid => unsafe {
+                format!(
+                    "CharacterGUid({})",
+                    CStr::from_ptr(self.value.string as _).to_str().unwrap()
+                )
+            },
+            ValueType::ItemGuid => unsafe {
+                format!(
+                    "ItemGuid({})",
+                    CStr::from_ptr(self.value.string as _).to_str().unwrap()
+                )
+            },
+            ValueType::Undefined => "Undefined".into(),
         };
 
         f.debug_struct("OsiArgumentValue")
             .field("value", &value)
-            .field("value_type", &self.value_type)
+            .field("value_type", &self.type_id)
             .field("unknown", &self.unknown)
             .finish()
     }
@@ -64,7 +82,7 @@ impl OsiArgumentValue {
     pub fn none() -> Self {
         Self {
             value: OsiArgumentValueUnion { int64: 0 },
-            value_type: TypeId::None,
+            type_id: ValueType::None,
             unknown: false,
         }
     }
@@ -72,7 +90,7 @@ impl OsiArgumentValue {
     pub fn int32(int32: i32) -> Self {
         Self {
             value: OsiArgumentValueUnion { int32 },
-            value_type: TypeId::Integer,
+            type_id: ValueType::Integer,
             unknown: false,
         }
     }
@@ -80,7 +98,7 @@ impl OsiArgumentValue {
     pub fn int64(int64: i64) -> Self {
         Self {
             value: OsiArgumentValueUnion { int64 },
-            value_type: TypeId::Integer64,
+            type_id: ValueType::Integer64,
             unknown: false,
         }
     }
@@ -88,7 +106,7 @@ impl OsiArgumentValue {
     pub fn real(float: f32) -> Self {
         Self {
             value: OsiArgumentValueUnion { float },
-            value_type: TypeId::Integer64,
+            type_id: ValueType::Real,
             unknown: false,
         }
     }
@@ -96,7 +114,7 @@ impl OsiArgumentValue {
     pub fn string(string: *const i8) -> Self {
         Self {
             value: OsiArgumentValueUnion { string },
-            value_type: TypeId::String,
+            type_id: ValueType::String,
             unknown: false,
         }
     }
@@ -104,7 +122,23 @@ impl OsiArgumentValue {
     pub fn guid_string(string: *const i8) -> Self {
         Self {
             value: OsiArgumentValueUnion { string },
-            value_type: TypeId::GuidString,
+            type_id: ValueType::GuidString,
+            unknown: false,
+        }
+    }
+
+    pub fn character_guid(string: *const i8) -> Self {
+        Self {
+            value: OsiArgumentValueUnion { string },
+            type_id: ValueType::CharacterGuid,
+            unknown: false,
+        }
+    }
+
+    pub fn item_guid(string: *const i8) -> Self {
+        Self {
+            value: OsiArgumentValueUnion { string },
+            type_id: ValueType::ItemGuid,
             unknown: false,
         }
     }
@@ -112,30 +146,51 @@ impl OsiArgumentValue {
     pub fn undefined() -> Self {
         Self {
             value: OsiArgumentValueUnion { int64: 0 },
-            value_type: TypeId::Undefined,
+            type_id: ValueType::Undefined,
             unknown: false,
         }
     }
 }
 
 #[repr(C)]
-union OsiArgumentValueUnion {
-    string: *const i8,
-    int32: i32,
-    int64: i64,
-    float: f32,
+pub(crate) union OsiArgumentValueUnion {
+    pub string: *const i8,
+    pub int32: i32,
+    pub int64: i64,
+    pub float: f32,
 }
 
 #[derive(Debug)]
 #[repr(u16)]
-enum TypeId {
+pub(crate) enum ValueType {
     None = 0,
     Integer = 1,
     Integer64 = 2,
     Real = 3,
     String = 4,
     GuidString = 5,
-    Undefined = 0x7f,
+    CharacterGuid = 6,
+    ItemGuid = 7,
+    Undefined = 0x7F,
+}
+
+impl TryFrom<u16> for ValueType {
+    type Error = u16;
+
+    fn try_from(value: u16) -> Result<Self, Self::Error> {
+        Ok(match value {
+            0 => Self::None,
+            1 => Self::Integer,
+            2 => Self::Integer64,
+            3 => Self::Real,
+            4 => Self::String,
+            5 => Self::GuidString,
+            6 => Self::CharacterGuid,
+            7 => Self::ItemGuid,
+            0x7F => Self::Undefined,
+            x => return Err(x),
+        })
+    }
 }
 
 #[derive(Debug)]
@@ -267,15 +322,15 @@ struct FunctionIdHash {
 #[derive(Debug)]
 #[repr(C)]
 pub(crate) struct Function {
-    vmt: *const (),
-    line: u32,
-    unknown1: u32,
-    unknown2: u32,
-    signatrue: *const FunctionSignature,
-    node: NodeRef,
-    r#type: FunctionType,
-    key: [u32; 4],
-    osi_function_id: u32,
+    pub vmt: *const (),
+    pub line: u32,
+    pub unknown1: u32,
+    pub unknown2: u32,
+    pub signatrue: *const FunctionSignature,
+    pub node: NodeRef,
+    pub r#type: FunctionType,
+    pub key: [u32; 4],
+    pub osi_function_id: u32,
 }
 
 impl Function {
@@ -298,35 +353,45 @@ impl Function {
 
 #[derive(Debug)]
 #[repr(C)]
-struct FunctionSignature {
-    vmt: *const (),
-    name: *const u8,
-    params: *const FunctionParamList,
-    out_param_list: FuncSigOutParamList,
-    unknown: u32,
+pub(crate) struct FunctionSignature {
+    pub vmt: *const (),
+    pub name: *const u8,
+    pub params: *const FunctionParamList,
+    pub out_param_list: FuncSigOutParamList,
+    pub unknown: u32,
 }
 
 #[derive(Debug)]
 #[repr(C)]
-struct FunctionParamList {}
-
-#[derive(Debug)]
-#[repr(C)]
-struct FuncSigOutParamList {
-    params: *const u8,
-    count: u32,
+pub(crate) struct FunctionParamList {
+    pub vmt: *const (),
+    pub params: List<FunctionParamDesc>,
 }
 
 #[derive(Debug)]
 #[repr(C)]
-struct NodeRef {
-    id: u32,
-    manager: *const (),
+pub(crate) struct FunctionParamDesc {
+    pub r#type: u16,
+    pub unknown: u32,
+}
+
+#[derive(Debug)]
+#[repr(C)]
+pub(crate) struct FuncSigOutParamList {
+    pub params: *const u8,
+    pub count: u32,
+}
+
+#[derive(Debug)]
+#[repr(C)]
+pub(crate) struct NodeRef {
+    pub id: u32,
+    pub manager: *const (),
 }
 
 #[derive(Debug)]
 #[repr(u32)]
-enum FunctionType {
+pub(crate) enum FunctionType {
     Unknown = 0,
 }
 
@@ -373,4 +438,19 @@ struct TMapNode<K, V> {
 struct KeyValuePair<K, V> {
     key: K,
     value: V,
+}
+
+#[derive(Debug)]
+#[repr(C)]
+pub(crate) struct List<T> {
+    pub head: *mut ListNode<T>,
+    pub size: u64,
+}
+
+#[derive(Debug)]
+#[repr(C)]
+pub(crate) struct ListNode<T> {
+    pub next: *mut ListNode<T>,
+    pub head: *mut ListNode<T>,
+    pub item: T,
 }
