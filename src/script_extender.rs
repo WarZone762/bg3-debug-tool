@@ -26,11 +26,7 @@ pub(crate) struct GameVersionInfo {
 
 impl Display for GameVersionInfo {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "v{}.{}.{}.{}",
-            self.major, self.minor, self.revision, self.build,
-        )
+        write!(f, "v{}.{}.{}.{}", self.major, self.minor, self.revision, self.build)
     }
 }
 
@@ -82,9 +78,9 @@ impl LibraryManager {
 
             let version = GameVersionInfo {
                 major: ((*fixed_file_info).dwFileVersionMS >> 16) as _,
-                minor: ((*fixed_file_info).dwFileVersionMS & 0xffff) as _,
+                minor: ((*fixed_file_info).dwFileVersionMS & 0xFFFF) as _,
                 revision: ((*fixed_file_info).dwFileVersionLS >> 16) as _,
-                build: ((*fixed_file_info).dwFileVersionLS & 0xffff) as _,
+                build: ((*fixed_file_info).dwFileVersionLS & 0xFFFF) as _,
             };
 
             let _ = LocalFree(resource_copy);

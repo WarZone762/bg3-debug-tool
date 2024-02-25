@@ -1,10 +1,6 @@
-use crate::{
-    binary_mappings::mappings::{TargetValue, TargetsOrPatch},
-    err, info, warn,
-};
-use std::{collections::HashMap, fmt::Debug, mem::size_of_val};
+use std::{fmt::Debug, mem::size_of_val};
 
-use mappings::{BinaryMappings, Condition, Mapping, MappingOrDllImport};
+use anyhow::bail;
 use widestring::U16CString;
 use windows::{
     core::{w, PCWSTR},
@@ -16,12 +12,34 @@ use windows::{
     },
 };
 
-use self::mappings::ConditionValue;
+use self::mappings::{
+    BinaryMappings, Condition, ConditionValue, Mapping, MappingOrDllImport, TargetType,
+    TargetValue, TargetsOrPatch,
+};
+use crate::{
+    err,
+    game_definitions::{FixedString, GamePtr, GlobalTemplateManager, LSStringView},
+    globals::Globals,
+    warn,
+};
 
-#[derive(Debug)]
+const BINARY_MAPPINGS_XML: &str = include_str!("BinaryMappings.xml");
+
+pub(crate) fn init_static_symbols() -> anyhow::Result<()> {
+    let binary_mappings: xml::BinaryMappings = quick_xml::de::from_str(BINARY_MAPPINGS_XML)?;
+    let mut symbol_mapper = SymbolMapper::new()?;
+
+    symbol_mapper.populate_mappings(binary_mappings.try_into().unwrap());
+
+    *Globals::static_symbols_mut() = symbol_mapper.static_symbols;
+
+    Ok(())
+}
+
+#[derive(Clone, Copy, Debug)]
 pub(crate) struct SymbolMapper {
     pub main_module: ModuleInfo,
-    pub mappings: HashMap<&'static str, Option<*const u8>>,
+    pub static_symbols: StaticSymbols,
 }
 
 impl SymbolMapper {
@@ -32,10 +50,7 @@ impl SymbolMapper {
             ModuleInfo::load("bg3.exe")
         }?;
 
-        Ok(Self {
-            main_module,
-            mappings: StaticSymbols::create_hash_map(),
-        })
+        Ok(Self { main_module, static_symbols: StaticSymbols::default() })
     }
 
     pub fn populate_mappings(&mut self, binary_mappings: BinaryMappings) {
@@ -48,7 +63,6 @@ impl SymbolMapper {
     }
 
     fn add_mapping(&mut self, mapping: &Mapping) {
-        // info!("scanning for {}", mapping.name);
         mapping.pattern.scan(
             unsafe {
                 std::slice::from_raw_parts(self.main_module.text_start, self.main_module.text_size)
@@ -58,22 +72,22 @@ impl SymbolMapper {
                     TargetsOrPatch::Targets(targets) => {
                         for t in targets {
                             match &t.value {
-                                TargetValue::Symbol(s) => {
-                                    if let Some(e) = self.mappings.get_mut(s.as_str()) {
-                                        if e.is_none() {
-                                            let addr = unsafe { addr.as_ptr().offset(t.offset) };
-                                            *e = Some(addr);
-                                            // info!(
-                                            //     "bound {s} to {addr:?} in {} ({:?})",
-                                            //     mapping.name, t.offset
-                                            // );
-                                        } else {
-                                            warn!("mapping {} already bound", mapping.name);
+                                TargetValue::Symbol(s) => match t.r#type {
+                                    TargetType::Absolute => (),
+                                    TargetType::Indirect => {
+                                        if let Some(addr) = unsafe {
+                                            asm_resolve_instruction_ref(
+                                                addr.as_ptr().offset(t.offset),
+                                            )
+                                        } {
+                                            if let Err(x) =
+                                                self.static_symbols.set(s.as_str(), addr)
+                                            {
+                                                warn!("{x}");
+                                            }
                                         }
-                                    } else {
-                                        err!("{} ({s}) is not in StaticSymbols", mapping.name);
                                     }
-                                }
+                                },
                                 TargetValue::NextSymbol { value, offset } => (),
                                 TargetValue::EngineCallback(_) => (),
                             }
@@ -106,7 +120,7 @@ impl SymbolMapper {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug)]
 pub(crate) struct ModuleInfo {
     pub start: *const u8,
     pub size: usize,
@@ -142,12 +156,7 @@ impl ModuleInfo {
                 }
             }
 
-            Ok(Self {
-                start,
-                size,
-                text_start,
-                text_size,
-            })
+            Ok(Self { start, size, text_start, text_size })
         }
     }
 }
@@ -155,11 +164,49 @@ impl ModuleInfo {
 macro_rules! static_symbols {
     {$($name: ident: $type: ty,)*} => {
         #[allow(non_snake_case, dead_code)]
-        #[derive(Clone, Copy, Debug)]
+        #[derive(Clone, Copy, Debug, Default)]
         pub(crate) struct StaticSymbols {
             $(
-                pub $name: $type,
+                pub $name: Option<$type>,
             )*
+        }
+
+        unsafe impl Send for StaticSymbols {}
+
+        impl StaticSymbols {
+            pub const fn new() -> Self {
+                Self {
+                    $(
+                        $name: None,
+                    )*
+                }
+            }
+
+            pub fn set(&mut self, name: &str, value: *const u8) -> anyhow::Result<()> {
+                let symbol_name = StaticSymbolName::from_str(name)?;
+
+                match symbol_name {
+                    $(
+                        StaticSymbolName::$name => {
+                            if self.$name.is_some() {
+                                bail!("mapping '{name}' is already bound");
+                            }
+                            self.$name = Some(unsafe { std::mem::transmute(value) })
+                        }
+                    )*
+                }
+
+                Ok(())
+            }
+
+            #[allow(dead_code)]
+            pub fn create_hash_map<T: Default>() -> std::collections::HashMap<&'static str, T> {
+                std::collections::HashMap::from([
+                    $(
+                        (stringify!($name), Default::default()),
+                    )*
+                ])
+            }
         }
 
         #[allow(non_camel_case_types, dead_code)]
@@ -171,30 +218,20 @@ macro_rules! static_symbols {
         }
 
         impl StaticSymbolName {
-            pub fn from_str(k: &str) -> Result<Self, String> {
+            pub fn from_str(k: &str) -> anyhow::Result<Self> {
                 match k {
                     $(
                         stringify!($name) => Ok(Self::$name),
                     )*
-                    x => Err(format!("unknown static symbol '{x}'")),
+                    x => bail!("unknown static symbol '{x}'"),
                 }
-            }
-        }
-
-        impl StaticSymbols {
-            pub fn create_hash_map<T: Default>() -> std::collections::HashMap<&'static str, T> {
-                std::collections::HashMap::from([
-                    $(
-                        (stringify!($name), Default::default()),
-                    )*
-                ])
             }
         }
     };
 }
 
 static_symbols! {
-    ls__FixedString__GetString: fn(),
+    ls__FixedString__GetString: extern "C" fn(GamePtr<FixedString>, GamePtr<LSStringView>) -> GamePtr<LSStringView>,
     ls__FixedString__IncRef: fn(),
     ls__GlobalStringTable__MainTable__CreateFromString: fn(),
     ls__GlobalStringTable__MainTable__DecRef: fn(),
@@ -255,7 +292,7 @@ static_symbols! {
     stats__Object__SetPropertyString: fn(),
 
     esv__LevelManager: *const (),
-    ls__GlobalTemplateManager: *const (),
+    ls__GlobalTemplateManager: GamePtr<GamePtr<GlobalTemplateManager>>,
     esv__CacheTemplateManager: *const (),
 
     esv__SavegameManager: *const (),
@@ -286,7 +323,7 @@ static_symbols! {
 unsafe fn asm_resolve_instruction_ref(insn: *const u8) -> Option<*const u8> {
     Some(match (*insn, *(insn.add(1)), *(insn.add(2))) {
         // Call (4b operand) instruction
-        (0xE8 | 0xE9, _, _) => {
+        (0xE8 | 0xE9, ..) => {
             let rel = *(insn.add(1) as *const i32) as isize;
             insn.offset(rel + 5)
         }
@@ -331,12 +368,15 @@ unsafe fn asm_resolve_instruction_ref(insn: *const u8) -> Option<*const u8> {
             insn.offset(rel + 7)
         }
         // CMP, reg, [rip+xx] intruction
-        (0x3B, _, _) => {
+        (0x3B, ..) => {
             let rel = *(insn.add(2) as *const i32) as isize;
             insn.offset(rel + 6)
         }
         _ => {
-            err!("asm_resolve_instruction_ref(): Not a supported CALL, MOV, LEA or CMP instruction at {insn:#?}");
+            err!(
+                "asm_resolve_instruction_ref(): Not a supported CALL, MOV, LEA or CMP instruction \
+                 at {insn:#?}"
+            );
             return None;
         }
     })
@@ -344,10 +384,12 @@ unsafe fn asm_resolve_instruction_ref(insn: *const u8) -> Option<*const u8> {
 
 pub(crate) mod mappings {
     #![allow(dead_code)]
-    use crate::warn;
+    use std::fmt::Debug;
+
+    use anyhow::{anyhow, bail};
 
     use super::{xml, StaticSymbolName};
-    use std::fmt::Debug;
+    use crate::warn;
 
     #[derive(Clone, Debug)]
     pub(crate) struct BinaryMappings {
@@ -357,7 +399,7 @@ pub(crate) mod mappings {
     }
 
     impl TryFrom<xml::BinaryMappings> for BinaryMappings {
-        type Error = String;
+        type Error = anyhow::Error;
 
         fn try_from(value: xml::BinaryMappings) -> Result<Self, Self::Error> {
             Ok(Self {
@@ -380,7 +422,7 @@ pub(crate) mod mappings {
     }
 
     impl TryFrom<xml::MappingOrDllImport> for MappingOrDllImport {
-        type Error = String;
+        type Error = anyhow::Error;
 
         fn try_from(value: xml::MappingOrDllImport) -> Result<Self, Self::Error> {
             Ok(match value {
@@ -398,9 +440,9 @@ pub(crate) mod mappings {
     }
 
     impl TryFrom<xml::DllImport> for DllImport {
-        type Error = String;
+        type Error = anyhow::Error;
 
-        fn try_from(value: xml::DllImport) -> Result<Self, String> {
+        fn try_from(value: xml::DllImport) -> Result<Self, Self::Error> {
             Ok(Self {
                 module: value.module,
                 proc: value.proc,
@@ -421,7 +463,7 @@ pub(crate) mod mappings {
     }
 
     impl TryFrom<xml::Mapping> for Mapping {
-        type Error = String;
+        type Error = anyhow::Error;
 
         fn try_from(value: xml::Mapping) -> Result<Self, Self::Error> {
             let mut condition = None;
@@ -438,9 +480,8 @@ pub(crate) mod mappings {
                 }
             }
 
-            let pattern = pattern
-                .ok_or_else(|| format!("no Pattern for {}", value.name))?
-                .try_into()?;
+            let pattern =
+                pattern.ok_or_else(|| anyhow!("no Pattern for {}", value.name))?.try_into()?;
 
             let targets_or_patch = if !targets.is_empty() && patch.is_none() {
                 TargetsOrPatch::Targets(
@@ -454,7 +495,7 @@ pub(crate) mod mappings {
             {
                 TargetsOrPatch::Patch(Patch::from_parsed(patch, &pattern)?)
             } else {
-                return Err(format!("both Targets and Patch defined for {}", value.name));
+                bail!("both Targets and Patch defined for {}", value.name);
             };
 
             Ok(Self {
@@ -462,9 +503,7 @@ pub(crate) mod mappings {
                 critical: value.critical,
                 allow_fail: value.allow_fail,
                 scope: value.scope.try_into()?,
-                condition: condition
-                    .map(|x| Condition::from_parsed(x, &pattern))
-                    .transpose()?,
+                condition: condition.map(|x| Condition::from_parsed(x, &pattern)).transpose()?,
                 pattern,
                 targets_or_patch,
             })
@@ -478,7 +517,7 @@ pub(crate) mod mappings {
     }
 
     impl TryFrom<xml::MappingScope> for MappingScope {
-        type Error = String;
+        type Error = anyhow::Error;
 
         fn try_from(value: xml::MappingScope) -> Result<Self, Self::Error> {
             match value {
@@ -495,7 +534,7 @@ pub(crate) mod mappings {
     }
 
     impl TryFrom<&str> for Pattern {
-        type Error = String;
+        type Error = anyhow::Error;
 
         fn try_from(value: &str) -> Result<Self, Self::Error> {
             let mut bytes = Vec::new();
@@ -521,7 +560,7 @@ pub(crate) mod mappings {
                         }
 
                         if name.is_empty() {
-                            return Err("empty anchor name found".into());
+                            bail!("empty anchor name found");
                         }
 
                         anchors.push((name, bytes.len()));
@@ -529,15 +568,15 @@ pub(crate) mod mappings {
                     // TODO: make sane
                     c1 => match (c1, chars.next(), chars.next()) {
                         (_, None, _) => {
-                            return Err("bytes must be 2 characters long".into());
+                            bail!("bytes must be 2 characters long");
                         }
                         (_, _, Some(x)) if x.is_alphanumeric() => {
-                            return Err("bytes must be separated by whitespace".into());
+                            bail!("bytes must be separated by whitespace");
                         }
                         ('?', Some('?'), _) => bytes.push(PatternByte::new(0, 0)),
                         (_, Some(c2), _) => bytes.push(PatternByte::new(
                             hex_to_u8(c1, c2)
-                                .ok_or_else(|| format!("invalid hex digit: {c1}{c2}"))?,
+                                .ok_or_else(|| anyhow!("invalid hex digit: {c1}{c2}"))?,
                             0xFF,
                         )),
                     },
@@ -545,9 +584,9 @@ pub(crate) mod mappings {
             }
 
             match bytes.first() {
-                None => Err("zero-length patterns not allowed".into()),
+                None => bail!("zero-length patterns not allowed"),
                 Some(first) if first.mask != 0xFF => {
-                    Err("first byte of pattern must be an exact match".into())
+                    bail!("first byte of pattern must be an exact match")
                 }
                 Some(_) => Ok(Pattern { bytes, anchors }),
             }
@@ -555,7 +594,7 @@ pub(crate) mod mappings {
     }
 
     impl TryFrom<&String> for Pattern {
-        type Error = String;
+        type Error = anyhow::Error;
 
         fn try_from(value: &String) -> Result<Self, Self::Error> {
             Self::try_from(value.as_str())
@@ -563,7 +602,7 @@ pub(crate) mod mappings {
     }
 
     impl TryFrom<String> for Pattern {
-        type Error = String;
+        type Error = anyhow::Error;
 
         fn try_from(value: String) -> Result<Self, Self::Error> {
             Self::try_from(value.as_str())
@@ -675,7 +714,7 @@ pub(crate) mod mappings {
     }
 
     impl Condition {
-        pub fn from_parsed(value: xml::Condition, pattern: &Pattern) -> Result<Self, String> {
+        pub fn from_parsed(value: xml::Condition, pattern: &Pattern) -> anyhow::Result<Self> {
             let offset = calculate_offset(&value.offset, pattern)?;
 
             Ok(Self {
@@ -710,7 +749,7 @@ pub(crate) mod mappings {
     }
 
     impl Target {
-        pub fn from_parsed(value: xml::Target, pattern: &Pattern) -> Result<Self, String> {
+        pub fn from_parsed(value: xml::Target, pattern: &Pattern) -> anyhow::Result<Self> {
             let offset = calculate_offset(&value.offset, pattern)?;
 
             Ok(Self {
@@ -730,16 +769,13 @@ pub(crate) mod mappings {
                         },
                         (None, None, None, Some(ec)) => TargetValue::EngineCallback(ec),
                         (symbol, next_symbol, next_symbol_seek_size, engine_callback) => {
-                            return Err(format!(
-                                "unexpected target definition: {:#?}",
-                                xml::Target {
-                                    symbol,
-                                    next_symbol,
-                                    next_symbol_seek_size,
-                                    engine_callback,
-                                    ..value
-                                }
-                            ))
+                            bail!("unexpected target definition: {:#?}", xml::Target {
+                                symbol,
+                                next_symbol,
+                                next_symbol_seek_size,
+                                engine_callback,
+                                ..value
+                            })
                         }
                     }
                 },
@@ -754,7 +790,7 @@ pub(crate) mod mappings {
     }
 
     impl TryFrom<xml::TargetType> for TargetType {
-        type Error = String;
+        type Error = anyhow::Error;
 
         fn try_from(value: xml::TargetType) -> Result<Self, Self::Error> {
             Ok(match value {
@@ -778,13 +814,10 @@ pub(crate) mod mappings {
     }
 
     impl Patch {
-        pub fn from_parsed(value: xml::Patch, pattern: &Pattern) -> Result<Self, String> {
+        pub fn from_parsed(value: xml::Patch, pattern: &Pattern) -> anyhow::Result<Self> {
             let offset = calculate_offset(&value.offset, pattern)?;
 
-            Ok(Self {
-                offset,
-                text: value.text,
-            })
+            Ok(Self { offset, text: value.text })
         }
     }
 
@@ -795,18 +828,18 @@ pub(crate) mod mappings {
         Some((c1 << 4) + c2)
     }
 
-    fn calculate_offset(offset: &str, pattern: &Pattern) -> Result<isize, String> {
+    fn calculate_offset(offset: &str, pattern: &Pattern) -> anyhow::Result<isize> {
         if offset.starts_with('@') {
             if let Some((_, offset)) = pattern.find_anchor(offset) {
                 Ok(*offset as _)
             } else {
-                Err(format!("unable to find offset {offset} in pattern"))
+                bail!("unable to find offset {offset} in pattern")
             }
         } else {
             offset
                 .trim_start_matches("0x")
                 .parse()
-                .map_err(|_| format!("unable to parse offset {offset}"))
+                .map_err(|_| anyhow!("unable to parse offset {offset}"))
         }
     }
 }
