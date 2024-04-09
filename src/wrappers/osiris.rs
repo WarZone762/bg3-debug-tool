@@ -6,7 +6,8 @@ use crate::{
     _println,
     game_definitions::{OsiArgumentDesc, OsiArgumentValue, OsiStringOwned, ValueType},
     globals::Globals,
-    hooks, info, warn,
+    hooks::osiris,
+    info, warn,
 };
 
 fn osi_get_arg_types(name: &str) -> Option<()> {
@@ -54,7 +55,7 @@ impl OsiCall {
 
         let osi_handle = osi_fn.handle();
         let osi_args = OsiArgumentDesc::from_values(self.args.iter().map(|x| x.to_ffi()));
-        if !hooks::Call(osi_handle, osi_args) {
+        if !osiris::Call(osi_handle, osi_args) {
             bail!("call '{}' failed", self.ident)
         }
 
@@ -115,7 +116,7 @@ impl OsiCall {
         let osi_args = OsiArgumentDesc::from_values(
             self.args.iter().map(|x| x.to_ffi()).chain(std::iter::once(ret)),
         );
-        if !hooks::Query(osi_handle, osi_args) {
+        if !osiris::Query(osi_handle, osi_args) {
             bail!("query '{}' failed", self.ident);
         }
 

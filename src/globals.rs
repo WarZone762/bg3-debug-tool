@@ -1,6 +1,6 @@
 use std::{io, net};
 
-use crate::{binary_mappings::StaticSymbols, game_definitions::OsirisStaticGlobals, hooks::Hooks};
+use crate::{binary_mappings::StaticSymbols, game_definitions::OsirisStaticGlobals};
 
 #[macro_export]
 macro_rules! info {
@@ -62,17 +62,11 @@ pub(crate) struct Globals {
     static_symbols: StaticSymbols,
     osiris_globals: Option<OsirisStaticGlobals>,
     io: Option<Io>,
-    hooks: Hooks,
 }
 
 impl Globals {
     pub const fn new() -> Self {
-        Self {
-            static_symbols: StaticSymbols::new(),
-            osiris_globals: None,
-            io: None,
-            hooks: Hooks::new(),
-        }
+        Self { static_symbols: StaticSymbols::new(), osiris_globals: None, io: None }
     }
 
     pub fn static_symbols() -> &'static StaticSymbols {
@@ -107,14 +101,6 @@ impl Globals {
 
     pub fn io_set(v: Option<Io>) {
         unsafe { GLOBALS.io = v }
-    }
-
-    pub fn hooks() -> &'static Hooks {
-        unsafe { &GLOBALS.hooks }
-    }
-
-    pub fn hooks_mut() -> &'static mut Hooks {
-        unsafe { &mut GLOBALS.hooks }
     }
 }
 
