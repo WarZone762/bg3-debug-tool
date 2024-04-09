@@ -4,16 +4,14 @@ use ash::{vk, RawPtr};
 use windows::{
     core::{s, w},
     Win32::{
-        Foundation::{BOOL, HANDLE, HWND, LPARAM},
+        Foundation::{BOOL, HANDLE, HWND, LPARAM, LRESULT, WPARAM},
         System::{
             LibraryLoader::{GetProcAddress, LoadLibraryW},
             Threading::GetCurrentThread,
         },
         UI::{
-            Input::KeyboardAndMouse::GetAsyncKeyState,
-            WindowsAndMessaging::{
-                EnumWindows, GetForegroundWindow, GetWindow, IsWindowVisible, GW_OWNER,
-            },
+            Shell::{DefSubclassProc, SetWindowSubclass},
+            WindowsAndMessaging::{EnumWindows, GetWindow, IsWindowVisible, GW_OWNER},
         },
     },
 };
@@ -27,7 +25,7 @@ use crate::{
 
 macro_rules! hook_definitions {
     {
-        $($mod_name:ident($dll_name:literal) {
+        $($mod_name:ident($dll_name:literal, $init_name:ident) {
             $(
                 $(#[symbol_name = $symbol_name:literal])?
                 $(#[no_init = $init:ident])?
@@ -35,23 +33,26 @@ macro_rules! hook_definitions {
             )*
         })*
     } => {
-        pub(crate) fn init_hooks() -> anyhow::Result<()> {
-            unsafe {
-                $(
-                    let $mod_name = LoadLibraryW(w!($dll_name))?;
-                )*
-                DetourTransactionBegin();
-                DetourUpdateThread(GetCurrentThread());
+        pub(crate) mod init {
+            use super::*;
+            $(
+                pub(crate) fn $init_name() -> anyhow::Result<()> {
+                    unsafe {
+                        let $mod_name = LoadLibraryW(w!($dll_name))?;
+                        DetourTransactionBegin();
+                        DetourUpdateThread(GetCurrentThread());
 
-                $($(
-                    if_no_init_meta!(init_hook_from_name!($mod_name, $name $(, $symbol_name)?) $(, $init)?);
-                )*)*
+                        $(
+                            if_no_init_meta!(init_hook_from_name!($mod_name, $name $(, $symbol_name)?) $(, $init)?);
+                        )*
 
-                DetourTransactionCommit();
-                hook();
-            }
+                        DetourTransactionCommit();
+                        hook();
+                    }
 
-            Ok(())
+                    Ok(())
+                }
+            )*
         }
 
         #[allow(non_snake_case, dead_code)]
@@ -122,97 +123,15 @@ macro_rules! init_hook_from_name {
     }};
 }
 
-fn hook() {
-    // unsafe {
-    //     create_device_vk();
-    //
-    //     let ani = VK_DATA.instance.as_ref().unwrap().get_device_proc_addr(
-    //         VK_DATA.fake_dev.as_ref().unwrap().handle(),
-    //         c"vkAcquireNextImageKHR".as_ptr(),
-    //     );
-    //     let ani2 = VK_DATA.instance.as_ref().unwrap().get_device_proc_addr(
-    //         VK_DATA.fake_dev.as_ref().unwrap().handle(),
-    //         c"vkAcquireNextImage2KHR".as_ptr(),
-    //     );
-    //     let qp = VK_DATA.instance.as_ref().unwrap().get_device_proc_addr(
-    //         VK_DATA.fake_dev.as_ref().unwrap().handle(),
-    //         c"vkQueuePresentKHR".as_ptr(),
-    //     );
-    //     let cs = VK_DATA.instance.as_ref().unwrap().get_device_proc_addr(
-    //         VK_DATA.fake_dev.as_ref().unwrap().handle(),
-    //         c"vkCreateSwapchainKHR".as_ptr(),
-    //     );
-    //
-    //     info!("{ani:?} {ani2:?} {qp:?} {cs:?}");
-    //
-    //     if let Some(dev) = VK_DATA.fake_dev.take() {
-    //         dev.destroy_device(VK_DATA.allocator);
-    //     }
-    //
-    //     if let Some(ani) = ani {
-    //         VK_DATA.hwnd = Some(GetForegroundWindow());
-    //
-    //         DetourTransactionBegin();
-    //         DetourUpdateThread(GetCurrentThread());
-    //
-    //         macro_rules! hook {
-    //             ($name:ident, $tgt:expr) => {
-    //                 Globals::hooks_mut().$name.set($tgt as _);
-    //                 DetourAttach(Globals::hooks_mut().$name.as_mut() as *mut
-    // _ as _, $name as _);             };
-    //         }
-    //
-    //         hook!(vkAcquireNextImageKHR, ani);
-    //         hook!(vkAcquireNextImage2KHR, ani2.unwrap());
-    //         hook!(vkQueuePresentKHR, qp.unwrap());
-    //         hook!(vkCreateSwapchainKHR, cs.unwrap());
-    //
-    //         DetourTransactionCommit();
-    //     }
-    // }
-}
+fn hook() {}
 
 hook_definitions! {
-sdl("SDL2.dll") {
-    fn SDL_CreateWindow(
-        title: *const u8,
-        x: i32,
-        y: i32,
-        w: i32,
-        h: i32,
-        flags: u32,
-    ) -> *const () {
-        info!("SDL_CreateWindow");
-
-        let res = original::SDL_CreateWindow(title, x, y, w, h, flags);
-
-        unsafe {
-            SDL_WINDOW = res;
-        }
-
-        res
-    }
-
-    fn SDL_PollEvent(event: *mut ()) -> i32 {
-        info!("SDL_PollEvent");
-        unsafe {
-            let res = original::SDL_PollEvent(event);
-
-            ImGui_ImplSDL2_ProcessEvent(event);
-
-            res
-        }
-    }
-}
-
-vulkan("vulkan-1.dll") {
+vulkan("vulkan-1.dll", vulkan) {
     fn vkCreateInstance(
         p_create_info: *const vk::InstanceCreateInfo,
         p_allocator: *const vk::AllocationCallbacks,
         p_instance: *mut vk::Instance,
     ) -> vk::Result {
-        info!("vkCreateInstance");
-
         unsafe {
             let name = (*(*p_create_info).p_application_info).p_application_name;
             let engine_name = (*(*p_create_info).p_application_info).p_application_name;
@@ -240,8 +159,6 @@ vulkan("vulkan-1.dll") {
         p_allocator: *const vk::AllocationCallbacks,
         p_device: *mut vk::Device,
     ) -> vk::Result {
-        info!("vkCreateDevice");
-
         let ret = original::vkCreateDevice(physical_device, p_create_info, p_allocator, p_device);
 
         unsafe {
@@ -254,13 +171,9 @@ vulkan("vulkan-1.dll") {
                 .get_device_proc_addr(DEV, c"vkCreateSwapchainKHR".as_ptr())
                 .unwrap();
 
-            let submit = instance()
-                .get_device_proc_addr(DEV, c"vkQueueSubmit2KHR".as_ptr())
-                .unwrap();
             DetourTransactionBegin();
             DetourUpdateThread(GetCurrentThread());
 
-            // init_hook!(vkQueueSubmit2KHR, submit);
             init_hook!(vkCreateSwapchainKHR, create_swapchain);
 
             DetourTransactionCommit();
@@ -269,7 +182,6 @@ vulkan("vulkan-1.dll") {
         ret
     }
 
-    // #[no_init = yes]
     fn vkAcquireNextImageKHR(
         device: vk::Device,
         swapchain: vk::SwapchainKHR,
@@ -278,7 +190,6 @@ vulkan("vulkan-1.dll") {
         fence: vk::Fence,
         p_image_index: *mut u32,
     ) -> vk::Result {
-        info!("vkAcquireNextImageKHR");
         let res = original::vkAcquireNextImageKHR(device, swapchain, timeout, semaphore, fence, p_image_index);
 
         unsafe {
@@ -288,14 +199,11 @@ vulkan("vulkan-1.dll") {
         res
     }
 
-    // #[no_init = yes]
     fn vkAcquireNextImage2KHR(
         device: vk::Device,
         p_acquire_info: *const vk::AcquireNextImageInfoKHR,
         p_image_index: *mut u32,
     ) -> vk::Result {
-        info!("vkAcquireNextImage2KHR");
-
         original::vkAcquireNextImage2KHR(device, p_acquire_info, p_image_index)
     }
 
@@ -306,7 +214,6 @@ vulkan("vulkan-1.dll") {
         p_allocator: *const vk::AllocationCallbacks,
         p_swapchain: *mut vk::SwapchainKHR,
     ) -> vk::Result {
-        info!("vkCreateSwapchainKHR");
         cleanup_render_target();
         unsafe {
             IMAGE_EXTENT = (*p_create_info).image_extent;
@@ -315,78 +222,18 @@ vulkan("vulkan-1.dll") {
         original::vkCreateSwapchainKHR(device, p_create_info, p_allocator, p_swapchain)
     }
 
-    // #[no_init = yes]
-    // fn vkQueueSubmit2KHR(
-    //     queue: vk::Queue,
-    //     submit_count: u32,
-    //     p_submits: *const vk::SubmitInfo2,
-    //     fence: vk::Fence,
-    // ) -> vk::Result {
-    //     info!("vkQueueSubmit2KHR");
-    //
-    //     unsafe {
-    //         let mut rendered = FRAME_RENDERED.lock().unwrap();
-    //         if *rendered || SWAPCHAIN == vk::SwapchainKHR::null() {
-    //             return original::vkQueueSubmit2KHR(queue, submit_count, p_submits, fence);
-    //         }
-    //         *rendered = true;
-    //         drop(rendered);
-    //
-    //         let p_submits = p_submits as *mut vk::SubmitInfo2;
-    //         render_im_gui_vulkan2(queue);
-    //
-    //         let fd = FRAMES[CUR_FRAME as usize];
-    //         let info = vk::CommandBufferSubmitInfo {
-    //             command_buffer: fd.command_buffer,
-    //             ..Default::default()
-    //         };
-    //
-    //         let infos = std::slice::from_raw_parts(
-    //             (*p_submits).p_command_buffer_infos,
-    //             (*p_submits).command_buffer_info_count as _,
-    //         );
-    //
-    //         let new_infos = [infos, &[info]].concat();
-    //
-    //         (*p_submits).command_buffer_info_count += 1;
-    //         (*p_submits).p_command_buffer_infos = new_infos.as_ptr();
-    //
-    //         // info!("vkQueueSubmit2KHR(");
-    //         // info!("{queue:?}");
-    //         // info!("{submit_count}");
-    //         // info!("{:#?}", *p_submits);
-    //         // if (*p_submits).command_buffer_info_count > 0 {
-    //         //     info!("{:#?}", *(*p_submits).p_command_buffer_infos);
-    //         // }
-    //         // if (*p_submits).wait_semaphore_info_count > 0 {
-    //         //     info!("{:#?}", *(*p_submits).p_wait_semaphore_infos);
-    //         // }
-    //         // if (*p_submits).signal_semaphore_info_count > 0 {
-    //         //     info!("{:#?}", *(*p_submits).p_signal_semaphore_infos);
-    //         // }
-    //         // info!("{fence:?}");
-    //         // info!(")");
-    //
-    //         original::vkQueueSubmit2KHR(queue, submit_count, p_submits, fence)
-    //     }
-    // }
-
-    // #[no_init = yes]
     fn vkQueuePresentKHR(
         queue: vk::Queue,
         p_present_info: *const vk::PresentInfoKHR,
     ) -> vk::Result {
-        info!("vkQueuePresentKHR");
-        unsafe {
-            render_im_gui_vulkan(queue, p_present_info);
-        }
+        render_im_gui_vulkan(queue, p_present_info);
 
         original::vkQueuePresentKHR(queue, p_present_info)
     }
 
 }
 
-osiris("Osiris.dll") {
+osiris("Osiris.dll", osiris) {
     #[symbol_name = "?RegisterDIVFunctions@COsiris@@QEAAXPEAUTOsirisInitFunction@@@Z"]
     fn RegisterDivFunctions(a: *const u8, b: *const u8) -> i32 {
         unsafe {
@@ -417,8 +264,6 @@ osiris("Osiris.dll") {
 
 const MIN_IMAGE_COUNT: u32 = 2;
 
-static mut SDL_WINDOW: *const () = ptr::null();
-
 static mut FRAMES: [ImGui_ImplVulkanH_Frame; 4] = [ImGui_ImplVulkanH_Frame::new(); 4];
 static mut FRAME_SEMAPHORES: [ImGui_ImplVulkanH_FrameSemaphores; 4] =
     [ImGui_ImplVulkanH_FrameSemaphores::new(); 4];
@@ -445,8 +290,6 @@ fn dev() -> &'static ash::Device {
 }
 
 fn render_im_gui_vulkan(queue: vk::Queue, p_present_info: *const vk::PresentInfoKHR) {
-    info!("render_im_gui_vulkan2");
-
     unsafe {
         let swapchain = *(*p_present_info).p_swapchains;
         if FRAMES[0].framebuffer == vk::Framebuffer::null() {
@@ -493,7 +336,7 @@ fn render_im_gui_vulkan(queue: vk::Queue, p_present_info: *const vk::PresentInfo
         }
 
         ImGui_ImplVulkan_NewFrame();
-        ImGui_ImplSDL2_NewFrame();
+        ImGui_ImplWin32_NewFrame();
 
         imgui::sys::igNewFrame();
         imgui::sys::igShowDemoWindow(ptr::null_mut());
@@ -508,17 +351,17 @@ fn render_im_gui_vulkan(queue: vk::Queue, p_present_info: *const vk::PresentInfo
         dev().cmd_end_render_pass(fd.command_buffer);
         dev().end_command_buffer(fd.command_buffer).unwrap();
 
-        let wait_semaphores_count = (*p_present_info).wait_semaphore_count;
+        // let wait_semaphores_count = (*p_present_info).wait_semaphore_count;
 
         let cb =
             vk::CommandBufferSubmitInfo { command_buffer: fd.command_buffer, ..Default::default() };
 
-        let ws = vk::SemaphoreSubmitInfo {
-            stage_mask: vk::PipelineStageFlags2::FRAGMENT_SHADER,
-            semaphore: *(*p_present_info).p_wait_semaphores,
-            value: 1,
-            ..Default::default()
-        };
+        // let ws = vk::SemaphoreSubmitInfo {
+        //     stage_mask: vk::PipelineStageFlags2::FRAGMENT_SHADER,
+        //     semaphore: *(*p_present_info).p_wait_semaphores,
+        //     value: 1,
+        //     ..Default::default()
+        // };
 
         let ss = vk::SemaphoreSubmitInfo {
             semaphore: FRAME_SEMAPHORES[CUR_FRAME as usize].image_acquired_semaphore,
@@ -538,59 +381,46 @@ fn render_im_gui_vulkan(queue: vk::Queue, p_present_info: *const vk::PresentInfo
         };
 
         dev().queue_submit2(queue, &[info], fd.fence).unwrap();
-
-        // let v = 0;
-        // let info = vk::SemaphoreWaitInfo {
-        //     semaphore_count: wait_semaphores_count,
-        //     p_semaphores: (*p_present_info).p_wait_semaphores,
-        //     p_values: &v,
-        //     ..Default::default()
-        // };
-        // dev().wait_semaphores(&info, u64::MAX).unwrap();
-        //
-        // let stages_wait =
-        //     vec![vk::PipelineStageFlags::FRAGMENT_SHADER;
-        // wait_semaphores_count as usize];
-        //
-        // let info = vk::SubmitInfo {
-        //     command_buffer_count: 1,
-        //     p_command_buffers: &fd.command_buffer,
-        //
-        //     // p_wait_dst_stage_mask: stages_wait.as_ptr(),
-        //     // wait_semaphore_count: wait_semaphores_count,
-        //     // p_wait_semaphores: (*p_present_info).p_wait_semaphores,
-        //     signal_semaphore_count: 1,
-        //     p_signal_semaphores: &FRAME_SEMAPHORES[CUR_FRAME as
-        // usize].image_acquired_semaphore,     ..Default::default()
-        // };
-        //
-        // dev().queue_submit(queue, &[info], fd.fence).unwrap();
     }
 }
 
 fn init_vulkan() {
-    info!("init_vulkan");
     unsafe {
         if imgui::sys::igGetCurrentContext().is_null() {
             imgui::sys::igCreateContext(std::ptr::null_mut());
-            // ImGui_ImplWin32_Init(GetForegroundWindow().0 as _);
-            // unsafe extern "system" fn is_main(handle: HWND, lparam: LPARAM) -> BOOL {
-            //     if GetWindow(handle, GW_OWNER) == HWND::default()
-            //         && IsWindowVisible(handle).as_bool()
-            //     {
-            //         *(lparam.0 as *mut HWND) = handle;
-            //         false.into()
-            //     } else {
-            //         true.into()
-            //     }
-            // }
-            //
-            // let mut hwnd = HWND(0);
-            // let _ = EnumWindows(Some(is_main), LPARAM(&mut hwnd as *mut _ as _));
-            // info!("{hwnd:?} {:?}", GetForegroundWindow());
-            // ImGui_ImplWin32_Init(hwnd.0 as _);
-            // ImGui_ImplWin32_EnableDpiAwareness();
-            ImGui_ImplSDL2_InitForVulkan(SDL_WINDOW);
+            unsafe extern "system" fn is_main(handle: HWND, lparam: LPARAM) -> BOOL {
+                if GetWindow(handle, GW_OWNER) == HWND::default()
+                    && IsWindowVisible(handle).as_bool()
+                {
+                    *(lparam.0 as *mut HWND) = handle;
+                    false.into()
+                } else {
+                    true.into()
+                }
+            }
+
+            let mut hwnd = HWND(0);
+            let _ = EnumWindows(Some(is_main), LPARAM(&mut hwnd as *mut _ as _));
+
+            ImGui_ImplWin32_Init(hwnd.0 as _);
+
+            unsafe extern "system" fn subclass_wnd_proc(
+                hwnd: HWND,
+                umsg: u32,
+                wparam: WPARAM,
+                lparam: LPARAM,
+                _uid_subclass: usize,
+                _dwref_data: usize,
+            ) -> LRESULT {
+                if ImGui_ImplWin32_WndProcHandler(hwnd, umsg, wparam, lparam) {
+                    return LRESULT(1);
+                }
+
+                DefSubclassProc(hwnd, umsg, wparam, lparam)
+            }
+
+            SetWindowSubclass(hwnd, Some(subclass_wnd_proc), 1, 0);
+
             let io = imgui::sys::igGetIO();
             (*io).IniFilename = ptr::null();
             (*io).LogFilename = ptr::null();
@@ -709,7 +539,7 @@ fn init_vulkan() {
 }
 
 fn create_render_target(swapchain: vk::SwapchainKHR) {
-    info!("create_render_target2");
+    // info!("create_render_target2");
     unsafe {
         let swapchain_ext = ash::extensions::khr::Swapchain::new(instance(), dev());
         let backbuffers = swapchain_ext.get_swapchain_images(swapchain).unwrap();
@@ -780,7 +610,7 @@ fn create_render_target(swapchain: vk::SwapchainKHR) {
 }
 
 fn cleanup_render_target() {
-    info!("cleanup_render_target2");
+    // info!("cleanup_render_target2");
     unsafe {
         for frame in FRAMES.iter_mut() {
             if frame.fence != vk::Fence::null() {
@@ -831,12 +661,10 @@ extern "system" {
 
 #[link(name = "imgui_backends", kind = "static")]
 extern "C" {
-    fn ImGui_ImplSDL2_InitForVulkan(window: *const ()) -> bool;
-    fn ImGui_ImplSDL2_NewFrame();
-    fn ImGui_ImplSDL2_ProcessEvent(event: *const ()) -> bool;
     fn ImGui_ImplWin32_Init(hwnd: *mut libc::c_void) -> bool;
+    fn ImGui_ImplWin32_WndProcHandler(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM)
+        -> bool;
     fn ImGui_ImplWin32_NewFrame();
-    fn ImGui_ImplWin32_EnableDpiAwareness();
     fn ImGui_ImplVulkan_Init(info: *const ImGui_ImplVulkan_InitInfo, render_pass: vk::RenderPass);
     fn ImGui_ImplVulkan_NewFrame();
     fn ImGui_ImplVulkan_CreateFontsTexture(command_buffer: vk::CommandBuffer) -> bool;

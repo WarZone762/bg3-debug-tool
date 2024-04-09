@@ -23,7 +23,7 @@ use crate::{
     binary_mappings::init_static_symbols,
     game_definitions::{FixedString, GamePtr, LSStringView},
     globals::Globals,
-    hooks::init_hooks,
+    hooks::init,
     script_extender::LibraryManager,
     wrappers::osiris::OsiCall,
 };
@@ -66,7 +66,8 @@ fn main() {
     }
 
     init_static_symbols().unwrap();
-    init_hooks().unwrap();
+    init::osiris().unwrap();
+    init::vulkan().unwrap();
 
     info!("Info");
     warn!("Warning");
