@@ -2,9 +2,12 @@ use std::{
     alloc,
     ffi::CStr,
     fmt::Debug,
+    marker::PhantomData,
     ops::{Deref, DerefMut},
     ptr,
 };
+
+use crate::globals::Globals;
 
 pub(crate) mod glm {
     #[derive(Debug)]
@@ -51,6 +54,21 @@ impl FixedString {
         Self { index: Self::null_index() }
     }
 
+    pub fn get(&self) -> Option<LSStringView> {
+        if self.index == FixedString::null_index() {
+            return None;
+        }
+
+        let getter = Globals::static_symbols().ls__FixedString__GetString?;
+        let mut sv = LSStringView::new();
+        getter(self.into(), GamePtr::new(&mut sv));
+        Some(sv)
+    }
+
+    pub fn as_str(&self) -> &str {
+        self.get().map(|x| x.as_str()).unwrap_or("")
+    }
+
     pub const fn null_index() -> u32 {
         0xFFFFFFFF
     }
@@ -67,12 +85,13 @@ pub(crate) struct FixedStringHeader {
 }
 
 #[repr(C)]
-pub(crate) struct LSStringView {
+pub(crate) struct LSStringView<'a> {
     data: *const u8,
     size: i32,
+    marker: PhantomData<&'a str>,
 }
 
-impl Debug for LSStringView {
+impl Debug for LSStringView<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("LSStringView")
             .field("data", &self.as_str())
@@ -81,12 +100,12 @@ impl Debug for LSStringView {
     }
 }
 
-impl LSStringView {
+impl<'a> LSStringView<'a> {
     pub fn new() -> Self {
-        Self { data: std::ptr::null(), size: 0 }
+        Self { data: std::ptr::null(), size: 0, marker: PhantomData::default() }
     }
 
-    pub fn as_str(&self) -> &str {
+    pub fn as_str(&self) -> &'a str {
         unsafe {
             std::str::from_utf8_unchecked(std::slice::from_raw_parts(self.data, self.size as _))
         }

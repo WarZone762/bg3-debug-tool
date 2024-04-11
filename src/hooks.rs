@@ -1,6 +1,16 @@
 use std::mem;
 
-use windows::Win32::Foundation::HANDLE;
+use ash::vk::DWORD;
+use windows::{
+    core::{PCSTR, PSTR},
+    Win32::{
+        Foundation::{BOOL, HANDLE},
+        Security::SECURITY_ATTRIBUTES,
+        System::Threading::{
+            CreateProcessA, PROCESS_CREATION_FLAGS, PROCESS_INFORMATION, STARTUPINFOA,
+        },
+    },
+};
 
 pub(crate) mod osiris;
 pub(crate) mod vulkan;

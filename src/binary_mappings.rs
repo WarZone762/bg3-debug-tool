@@ -44,11 +44,12 @@ pub(crate) struct SymbolMapper {
 
 impl SymbolMapper {
     pub fn new() -> windows::core::Result<Self> {
-        let main_module = if unsafe { GetModuleHandleW(w!("bg3.exe")) }?.is_invalid() {
-            ModuleInfo::load("bg3_dx11.exe")
-        } else {
-            ModuleInfo::load("bg3.exe")
-        }?;
+        let main_module =
+            if unsafe { GetModuleHandleW(w!("bg3.exe")) }.is_ok_and(|x| !x.is_invalid()) {
+                ModuleInfo::load("bg3.exe")
+            } else {
+                ModuleInfo::load("bg3_dx11.exe")
+            }?;
 
         Ok(Self { main_module, static_symbols: StaticSymbols::default() })
     }

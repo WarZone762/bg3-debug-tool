@@ -24,8 +24,9 @@ args = ["test", "--", "--nocapture"]
 command = "cp"
 args = [
     "-v",
-    "./target/x86_64-pc-windows-msvc/${BUILD_TYPE}/bg3se_rs.dll",
-    "${GAME_PATH}/bin/DWrite.dll",
+    "./target/x86_64-pc-windows-msvc/${BUILD_TYPE}/bg3_debug_tool.dll",
+    "./target/x86_64-pc-windows-msvc/${BUILD_TYPE}/bg3-debug-tool-loader.exe",
+    "${GAME_PATH}/bin/",
 ]
 dependencies = ["build"]
 

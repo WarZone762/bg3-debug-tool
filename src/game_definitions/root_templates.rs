@@ -39,18 +39,16 @@ pub(crate) struct GlobalTemplateBank {
 #[derive(Debug)]
 #[repr(C)]
 pub(crate) struct GameObjectTemplate {
-    vmt: *const (),
-    pub flags: OverrideableProperty<u32>,
-    pub tags: *const (),
+    pub vmt: GamePtr<GameObjectTemplateVMT>,
+    field_8: u64,
     pub id: FixedString,
-    pub name: STDString,
     pub template_name: FixedString,
     pub parent_template_id: FixedString,
-    field_50: i32,
-    pub is_global: bool,
-    pub is_deleted: bool,
-    pad: [u8; 4],
+    pub name: STDString,
     pub group_id: OverrideableProperty<u32>,
+    pub level_name: FixedString,
+    pad: [u8; 4],
+    pub camera_offset: OverrideableProperty<glm::Vec3>,
     pub transform: OverrideableProperty<Transform>,
     pub visual_template: OverrideableProperty<FixedString>,
     pub physics_template: OverrideableProperty<FixedString>,
@@ -60,10 +58,23 @@ pub(crate) struct GameObjectTemplate {
     pub allow_receive_decal_when_animated: OverrideableProperty<bool>,
     pub is_reflecting: OverrideableProperty<bool>,
     pub is_shadow_proxy: OverrideableProperty<bool>,
+    pub global_deleted_flag: u8,
     pub render_channel: OverrideableProperty<u8>,
-    pub camera_offset: OverrideableProperty<glm::Vec3>,
-    pub has_parent_mod_relation: OverrideableProperty<bool>,
-    pad2: [u8; 6],
-    pub has_gameplay_value: OverrideableProperty<bool>,
+    pub parent_template_flags: u8,
     pub file_name: STDString,
+}
+
+impl GameObjectTemplate {
+    pub fn get_type(&self) -> &FixedString {
+        (self.vmt.get_type)(self.into()).as_ref()
+    }
+}
+
+#[derive(Debug)]
+#[repr(C)]
+pub(crate) struct GameObjectTemplateVMT {
+    dtor: fn(GamePtr<GameObjectTemplate>),
+    get_name: fn(GamePtr<GameObjectTemplate>, *const ()),
+    debug_dump: fn(GamePtr<GameObjectTemplate>, *const ()),
+    get_type: fn(GamePtr<GameObjectTemplate>) -> GamePtr<FixedString>,
 }

@@ -51,13 +51,13 @@ impl LibraryManager {
 
             let resource = FindResourceW(game_module, PCWSTR(VS_VERSION_INFO as _), RT_VERSION);
             if resource.is_invalid() {
-                return Err(GetLastError().unwrap_err());
+                return Err(GetLastError().into());
             }
             let size = SizeofResource(game_module, resource) as usize;
             let data = LoadResource(game_module, resource)?;
             let resource = LockResource(data);
             if resource.is_null() {
-                return Err(GetLastError().unwrap_err());
+                return Err(GetLastError().into());
             }
 
             let resource_copy = LocalAlloc(LMEM_FIXED, size)?;
@@ -73,7 +73,7 @@ impl LibraryManager {
             )
             .as_bool()
             {
-                return Err(GetLastError().unwrap_err());
+                return Err(GetLastError().into());
             }
 
             let version = GameVersionInfo {

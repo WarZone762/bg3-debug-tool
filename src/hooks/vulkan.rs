@@ -19,13 +19,13 @@ use crate::{
 hook_definitions! {
 vulkan("vulkan-1.dll") {
     fn vkCreateInstance(
-        p_create_info: *const vk::InstanceCreateInfo,
+        p_create_info: *mut vk::InstanceCreateInfo,
         p_allocator: *const vk::AllocationCallbacks,
         p_instance: *mut vk::Instance,
     ) -> vk::Result {
         unsafe {
             let name = (*(*p_create_info).p_application_info).p_application_name;
-            let engine_name = (*(*p_create_info).p_application_info).p_application_name;
+            let engine_name = (*(*p_create_info).p_application_info).p_engine_name;
 
             let name = std::ffi::CStr::from_ptr(name);
             let engine_name = std::ffi::CStr::from_ptr(engine_name);
@@ -164,6 +164,8 @@ fn render_im_gui_vulkan(queue: vk::Queue, p_present_info: *const vk::PresentInfo
         dev().wait_for_fences(&[fd.fence], true, u64::MAX).unwrap();
         dev().reset_fences(&[fd.fence]).unwrap();
 
+        // dev().reset_command_pool(fd.command_pool,
+        // vk::CommandPoolResetFlags::empty()).unwrap();
         dev()
             .reset_command_buffer(fd.command_buffer, vk::CommandBufferResetFlags::empty())
             .unwrap();
@@ -171,12 +173,10 @@ fn render_im_gui_vulkan(queue: vk::Queue, p_present_info: *const vk::PresentInfo
         info.flags |= vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT;
         dev().begin_command_buffer(fd.command_buffer, &info).unwrap();
 
-        let info = vk::RenderPassBeginInfo {
-            render_pass: RENDER_PASS,
-            framebuffer: fd.framebuffer,
-            render_area: vk::Rect2D { extent: IMAGE_EXTENT, ..Default::default() },
-            ..Default::default()
-        };
+        let info = vk::RenderPassBeginInfo::builder()
+            .render_pass(RENDER_PASS)
+            .framebuffer(fd.framebuffer)
+            .render_area(*vk::Rect2D::builder().extent(IMAGE_EXTENT));
         dev().cmd_begin_render_pass(fd.command_buffer, &info, vk::SubpassContents::INLINE);
 
         if (*imgui::sys::igGetIO()).BackendRendererUserData.is_null() {
@@ -214,36 +214,26 @@ fn render_im_gui_vulkan(queue: vk::Queue, p_present_info: *const vk::PresentInfo
         dev().cmd_end_render_pass(fd.command_buffer);
         dev().end_command_buffer(fd.command_buffer).unwrap();
 
-        // let wait_semaphores_count = (*p_present_info).wait_semaphore_count;
+        let cb = vk::CommandBufferSubmitInfo::builder().command_buffer(fd.command_buffer);
 
-        let cb =
-            vk::CommandBufferSubmitInfo { command_buffer: fd.command_buffer, ..Default::default() };
+        // let ws = vk::SemaphoreSubmitInfo::builder()
+        //     .stage_mask(vk::PipelineStageFlags2::FRAGMENT_SHADER)
+        //     .semaphore(*(*p_present_info).p_wait_semaphores)
+        //     .value(1);
 
-        // let ws = vk::SemaphoreSubmitInfo {
-        //     stage_mask: vk::PipelineStageFlags2::FRAGMENT_SHADER,
-        //     semaphore: *(*p_present_info).p_wait_semaphores,
-        //     value: 1,
-        //     ..Default::default()
-        // };
+        let ss = vk::SemaphoreSubmitInfo::builder()
+            .semaphore(FRAME_SEMAPHORES[CUR_FRAME as usize].image_acquired_semaphore)
+            .value(1);
 
-        let ss = vk::SemaphoreSubmitInfo {
-            semaphore: FRAME_SEMAPHORES[CUR_FRAME as usize].image_acquired_semaphore,
-            value: 1,
-            ..Default::default()
-        };
+        let command_buffer_infos = [*cb];
+        // let wain_semaphore_infos = [*ws];
+        let signal_semaphore_infos = [*ss];
+        let info = vk::SubmitInfo2::builder()
+            .command_buffer_infos(&command_buffer_infos)
+            // .wait_semaphore_infos(&)
+            .signal_semaphore_infos(&signal_semaphore_infos);
 
-        let info = vk::SubmitInfo2 {
-            command_buffer_info_count: 1,
-            p_command_buffer_infos: &cb,
-
-            // wait_semaphore_info_count: wait_semaphores_count,
-            // p_wait_semaphore_infos: &ws,
-            signal_semaphore_info_count: 1,
-            p_signal_semaphore_infos: &ss,
-            ..Default::default()
-        };
-
-        dev().queue_submit2(queue, &[info], fd.fence).unwrap();
+        dev().queue_submit2(queue, &[*info], fd.fence).unwrap();
     }
 }
 
@@ -344,58 +334,45 @@ fn init_vulkan() {
             },
         ];
 
-        let pool_info = vk::DescriptorPoolCreateInfo {
-            flags: vk::DescriptorPoolCreateFlags::FREE_DESCRIPTOR_SET,
-            max_sets: 1000 * pool_sizes.len() as u32,
-            pool_size_count: pool_sizes.len() as _,
-            p_pool_sizes: pool_sizes.as_ptr(),
-            ..Default::default()
-        };
+        let pool_info = vk::DescriptorPoolCreateInfo::builder()
+            .flags(vk::DescriptorPoolCreateFlags::FREE_DESCRIPTOR_SET)
+            .max_sets(1000 * pool_sizes.len() as u32)
+            .pool_sizes(&pool_sizes);
         DESCRIPTOR_POOL = dev().create_descriptor_pool(&pool_info, ALLOCATOR).unwrap();
 
-        let attachment = vk::AttachmentDescription {
-            format: vk::Format::B8G8R8A8_UNORM,
-            samples: vk::SampleCountFlags::TYPE_1,
-            load_op: vk::AttachmentLoadOp::LOAD,
-            store_op: vk::AttachmentStoreOp::STORE,
-            stencil_load_op: vk::AttachmentLoadOp::DONT_CARE,
-            stencil_store_op: vk::AttachmentStoreOp::DONT_CARE,
-            initial_layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
-            final_layout: vk::ImageLayout::PRESENT_SRC_KHR,
-            ..Default::default()
-        };
+        let attachment = vk::AttachmentDescription::builder()
+            .format(vk::Format::B8G8R8A8_UNORM)
+            .samples(vk::SampleCountFlags::TYPE_1)
+            .load_op(vk::AttachmentLoadOp::LOAD)
+            .store_op(vk::AttachmentStoreOp::STORE)
+            .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
+            .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
+            .initial_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+            .final_layout(vk::ImageLayout::PRESENT_SRC_KHR);
 
-        let color_attachment = vk::AttachmentReference {
-            attachment: 0,
-            layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
-        };
+        let color_attachment =
+            vk::AttachmentReference::builder().layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
 
-        let subpass = vk::SubpassDescription {
-            pipeline_bind_point: vk::PipelineBindPoint::GRAPHICS,
-            color_attachment_count: 1,
-            p_color_attachments: &color_attachment,
-            ..Default::default()
-        };
+        let color_attachments = [*color_attachment];
+        let subpass = vk::SubpassDescription::builder()
+            .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
+            .color_attachments(&color_attachments);
 
-        let dependency = vk::SubpassDependency {
-            src_subpass: vk::SUBPASS_EXTERNAL,
-            dst_subpass: 0,
-            src_stage_mask: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
-            dst_stage_mask: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
-            src_access_mask: vk::AccessFlags::empty(),
-            dst_access_mask: vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
-            ..Default::default()
-        };
+        let dependency = vk::SubpassDependency::builder()
+            .src_subpass(vk::SUBPASS_EXTERNAL)
+            .src_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
+            .dst_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
+            // .src_access_mask(vk::AccessFlags::empty())
+            .src_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE)
+            .dst_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE);
 
-        let info = vk::RenderPassCreateInfo {
-            attachment_count: 1,
-            p_attachments: &attachment,
-            subpass_count: 1,
-            p_subpasses: &subpass,
-            dependency_count: 1,
-            p_dependencies: &dependency,
-            ..Default::default()
-        };
+        let attachments = [*attachment];
+        let subpasses = [*subpass];
+        let dependencies = [*dependency];
+        let info = vk::RenderPassCreateInfo::builder()
+            .attachments(&attachments)
+            .subpasses(&subpasses)
+            .dependencies(&dependencies);
 
         RENDER_PASS = dev().create_render_pass(&info, ALLOCATOR).unwrap();
     }
@@ -411,23 +388,18 @@ fn create_render_target(swapchain: vk::SwapchainKHR) {
 
             fd.backbuffer = *image;
 
-            let info = vk::CommandPoolCreateInfo {
-                flags: vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER,
-                queue_family_index: QUEUE_FAMILY,
-                ..Default::default()
-            };
+            let info = vk::CommandPoolCreateInfo::builder()
+                .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER)
+                .queue_family_index(QUEUE_FAMILY);
             fd.command_pool = dev().create_command_pool(&info, ALLOCATOR).unwrap();
 
-            let info = vk::CommandBufferAllocateInfo {
-                level: vk::CommandBufferLevel::PRIMARY,
-                command_pool: fd.command_pool,
-                command_buffer_count: 1,
-                ..Default::default()
-            };
+            let info = vk::CommandBufferAllocateInfo::builder()
+                .level(vk::CommandBufferLevel::PRIMARY)
+                .command_pool(fd.command_pool)
+                .command_buffer_count(1);
             fd.command_buffer = dev().allocate_command_buffers(&info).unwrap()[0];
 
-            let info =
-                vk::FenceCreateInfo { flags: vk::FenceCreateFlags::SIGNALED, ..Default::default() };
+            let info = vk::FenceCreateInfo::builder().flags(vk::FenceCreateFlags::SIGNALED);
             fd.fence = dev().create_fence(&info, ALLOCATOR).unwrap();
 
             let info = vk::SemaphoreCreateInfo::default();
@@ -437,32 +409,28 @@ fn create_render_target(swapchain: vk::SwapchainKHR) {
                 dev().create_semaphore(&info, ALLOCATOR).unwrap();
         }
 
-        let mut info = vk::ImageViewCreateInfo {
-            view_type: vk::ImageViewType::TYPE_2D,
-            format: vk::Format::B8G8R8A8_UNORM,
-            subresource_range: vk::ImageSubresourceRange {
+        let mut info = vk::ImageViewCreateInfo::builder()
+            .view_type(vk::ImageViewType::TYPE_2D)
+            .format(vk::Format::B8G8R8A8_UNORM)
+            .subresource_range(vk::ImageSubresourceRange {
                 aspect_mask: vk::ImageAspectFlags::COLOR,
                 base_mip_level: 0,
                 level_count: 1,
                 base_array_layer: 0,
                 layer_count: 1,
-            },
-            ..Default::default()
-        };
+            });
 
         for fd in FRAMES.iter_mut().take(backbuffers.len()) {
             info.image = fd.backbuffer;
             fd.backbuffer_view = dev().create_image_view(&info, ALLOCATOR).unwrap();
         }
 
-        let mut info = vk::FramebufferCreateInfo {
-            render_pass: RENDER_PASS,
-            attachment_count: 1,
-            width: IMAGE_EXTENT.width,
-            height: IMAGE_EXTENT.height,
-            layers: 1,
-            ..Default::default()
-        };
+        let mut info = vk::FramebufferCreateInfo::builder()
+            .render_pass(RENDER_PASS)
+            .attachment_count(1)
+            .width(IMAGE_EXTENT.width)
+            .height(IMAGE_EXTENT.height)
+            .layers(1);
 
         for fd in FRAMES.iter_mut().take(backbuffers.len()) {
             info.p_attachments = &fd.backbuffer_view;

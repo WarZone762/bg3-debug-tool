@@ -6,7 +6,6 @@ fn main() {
         .include("third-party/SDL2-2.30.0/include")
         .include("third-party/Vulkan-Headers/include")
         .file("third-party/imgui/backends/imgui_impl_vulkan.cpp")
-        .file("third-party/imgui/backends/imgui_impl_sdl.cpp")
         .file("third-party/imgui/backends/imgui_impl_win32.cpp")
         .compile("imgui_backends");
     println!("cargo:rustc-link-lib=SDL2");

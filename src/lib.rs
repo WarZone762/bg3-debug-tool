@@ -5,17 +5,23 @@ mod binary_mappings;
 mod game_definitions;
 mod globals;
 mod hooks;
+mod hud;
 mod script_extender;
 mod wrappers;
 
-use std::{io::BufRead, panic, thread};
+use std::{io::BufRead, mem, panic, thread};
 
+use hudhook::{hooks::dx11::ImguiDx11Hooks, Hudhook};
 use widestring::u16cstr;
 use windows::{
-    core::PCWSTR,
+    core::{s, w, IUnknown, HRESULT, PCWSTR},
     Win32::{
         Foundation::{GetLastError, BOOL, HANDLE, HMODULE},
-        System::{LibraryLoader::LoadLibraryW, SystemInformation::GetSystemDirectoryW},
+        System::{
+            LibraryLoader::{GetModuleHandleW, GetProcAddress, LoadLibraryW},
+            SystemInformation::GetSystemDirectoryW,
+            SystemServices::{DLL_PROCESS_ATTACH, DLL_PROCESS_DETACH},
+        },
     },
 };
 
@@ -28,10 +34,10 @@ use crate::{
 };
 
 #[no_mangle]
-pub extern "system" fn DllMain(_dll: HANDLE, reason: DllCallReason, _reserved: &u32) -> BOOL {
+pub extern "system" fn DllMain(_dll: HMODULE, reason: u32, _reserved: &u32) -> BOOL {
     match reason {
-        DllCallReason::DLL_PROCESS_ATTACH => main(),
-        DllCallReason::DLL_PROCESS_DETACH => (),
+        DLL_PROCESS_ATTACH => main(),
+        DLL_PROCESS_DETACH => (),
         _ => (),
     }
     true.into()
@@ -51,14 +57,15 @@ fn main() {
         old_panic_hook(info)
     }));
 
-    load_dwrite().unwrap();
-
     if let Ok(version) = LibraryManager::game_version() {
         if version.is_supported() {
             info!("Game version {version} OK");
         } else {
             err!("Game versino {version} is not supported, please upgrade!");
-            panic!("Scrip Extender doesn't support game versions below v4.37, please upgrade!");
+            panic!(
+                "Scrip Extender doesn't support game versions below v4.37,
+    please upgrade!"
+            );
         }
     } else {
         err!("Failed to retrieve game version info.");
@@ -66,28 +73,25 @@ fn main() {
 
     init_static_symbols().unwrap();
     hooks::osiris::init().unwrap();
-    hooks::vulkan::init().unwrap();
 
-    info!("Info");
-    warn!("Warning");
-    err!("Error");
+    let is_dx11 = unsafe { GetModuleHandleW(w!("bg3_dx11.exe")) }.is_ok_and(|x| !x.is_invalid());
+    if is_dx11 {
+        std::thread::spawn(move || {
+            if let Err(e) =
+                Hudhook::builder().with::<ImguiDx11Hooks>(hud::Hud::new()).build().apply()
+            {
+                err!("Couldn't apply hooks: {e:?}");
+            }
+        });
+    } else {
+        hooks::vulkan::init().unwrap();
+    }
 
     thread::spawn(console_thread);
 }
 
 fn console_thread() {
     let mut buf = String::new();
-
-    let get_fixed_string = |mut fs: FixedString| -> Option<LSStringView> {
-        if fs.index == FixedString::null_index() {
-            return None;
-        }
-
-        let getter = Globals::static_symbols().ls__FixedString__GetString?;
-        let mut sv = LSStringView::new();
-        getter(GamePtr::new(&mut fs), GamePtr::new(&mut sv));
-        Some(sv)
-    };
 
     fn exec_cmd<'a>(buf: &'a mut String, name: &str) -> &'a str {
         _print!("{name} >> ");
@@ -114,7 +118,8 @@ fn console_thread() {
 
                         let name = v.name.as_str();
                         if name.contains(input) {
-                            info!("{name:?}: {k:?}, {:?}", get_fixed_string(v.id));
+                            info!("{name:?}: {k:?}, {}", v.id.as_str());
+                            info!("{}", v.get_type().as_str());
                             count += 1;
                         }
                     }
@@ -156,32 +161,6 @@ fn console_thread() {
             c => warn!("unknown command '{c}'"),
         }
     }
-}
-
-fn load_dwrite() -> windows::core::Result<HMODULE> {
-    let mut dll_path = [0; 2048];
-
-    unsafe {
-        let path_size = GetSystemDirectoryW(Some(&mut dll_path)) as usize;
-        if path_size == 0 {
-            return Err(GetLastError().unwrap_err());
-        }
-
-        let dll_name = u16cstr!("\\DWrite.dll");
-        dll_path[path_size..(path_size + dll_name.len())].copy_from_slice(dll_name.as_slice());
-
-        LoadLibraryW(PCWSTR(dll_path.as_ptr()))
-    }
-}
-
-#[allow(non_camel_case_types)]
-#[repr(u32)]
-#[derive(Clone, Copy, Debug)]
-pub enum DllCallReason {
-    DLL_PROCESS_ATTACH = 1,
-    DLL_PROCESS_DETACH = 0,
-    DLL_THREAD_ATTACH = 2,
-    DLL_THREAD_DETACH = 3,
 }
 
 fn print_bytes(buf: &[u8], width: usize) {
