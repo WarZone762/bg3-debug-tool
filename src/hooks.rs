@@ -1,14 +1,10 @@
-use std::mem;
+use std::{ffi::CStr, mem};
 
-use ash::vk::DWORD;
 use windows::{
-    core::{PCSTR, PSTR},
+    core::PCSTR,
     Win32::{
-        Foundation::{BOOL, HANDLE},
-        Security::SECURITY_ATTRIBUTES,
-        System::Threading::{
-            CreateProcessA, PROCESS_CREATION_FLAGS, PROCESS_INFORMATION, STARTUPINFOA,
-        },
+        Foundation::{HANDLE, HMODULE},
+        System::LibraryLoader::GetProcAddress,
     },
 };
 
@@ -26,7 +22,7 @@ macro_rules! hook_definitions {
             )*
         }
     } => {
-        pub(crate) fn init() -> anyhow::Result<()> {
+        pub(crate) fn hook() -> anyhow::Result<()> {
             unsafe {
                 let $mod_name = windows::Win32::System::LibraryLoader::LoadLibraryW(
                     windows::core::w!($dll_name)
@@ -61,7 +57,7 @@ macro_rules! hook_definitions {
         pub(crate) use _hooks::*;
 
         #[allow(non_snake_case)]
-        #[derive(Debug, Default)]
+        #[derive(Debug)]
         pub(crate) struct Hooks {
             $(
                 pub $name: $crate::hooks::HookableFunction<extern "C" fn($($arg_name: $arg),*) $(-> $ret)?>,
@@ -72,7 +68,7 @@ macro_rules! hook_definitions {
             pub const fn new() -> Self {
                 Self {
                     $(
-                        $name: $crate::hooks::HookableFunction::new(),
+                        $name: $crate::hooks::HookableFunction::new($name),
                     )*
                 }
             }
@@ -85,7 +81,7 @@ macro_rules! hook_definitions {
             use super::*;
             $(
                 pub extern "C" fn $name($($arg_name: $arg),*) $(-> $ret)? {
-                    unsafe { HOOKS.$name.as_ref()($($arg_name),*) }
+                    unsafe { HOOKS.$name.original()($($arg_name),*) }
                 }
             )*
         }
@@ -101,75 +97,146 @@ macro_rules! if_no_init_meta {
 }
 
 #[macro_export]
-macro_rules! init_hook {
-    ($name:ident, $tgt:expr) => {
-        HOOKS.$name.set($tgt as _);
-        $crate::hooks::DetourAttach(HOOKS.$name.as_mut() as *mut _ as _, $name as _)
-    };
-}
-
-#[macro_export]
 macro_rules! init_hook_from_name {
     ($module:expr, $name:ident) => {
         $crate::init_hook_from_name!($module, $name, stringify!($name))
     };
     ($module:expr, $name:ident, $symbol_name:expr) => {{
-        let Some(tgt) = windows::Win32::System::LibraryLoader::GetProcAddress(
+        HOOKS.$name.find_attach(
             $module,
-            windows::core::PCSTR(concat!($symbol_name, "\0").as_ptr()),
-        ) else {
-            anyhow::bail!(concat!("Failed to find ", $symbol_name));
-        };
-        $crate::init_hook!($name, tgt);
+            std::ffi::CStr::from_ptr(concat!($symbol_name, "\0").as_ptr() as _),
+        );
     }};
+}
+
+#[macro_export]
+macro_rules! fn_definitions {
+    {
+        $mod_name:ident($dll_name:literal) {
+            $(
+                $(#[symbol_name = $symbol_name:literal])?
+                $(#[no_init = $init:ident])?
+                fn $name:ident($($arg_name:ident: $arg:ty),* $(,)?) $(-> $ret: ty)?;
+            )*
+        }
+    } => {
+        // pub(crate) fn init_functions() -> anyhow::Result<()> {
+        //     unsafe {
+        //         let $mod_name = windows::Win32::System::LibraryLoader::LoadLibraryW(
+        //             windows::core::w!($dll_name)
+        //         )?;
+        //
+        //         $(
+        //             $crate::if_no_init_meta!(
+        //                 $crate::init_hook_from_name!(
+        //                     $mod_name,
+        //                     $name $(, $symbol_name)?
+        //                 ) $(, $init)?
+        //             );
+        //         )*
+        //     }
+        //
+        //     Ok(())
+        // }
+
+        #[allow(non_snake_case)]
+        #[derive(Debug)]
+        pub(crate) struct Functions {
+            $(
+                pub $name: $crate::hooks::GameFunction<extern "C" fn($($arg_name: $arg),*) $(-> $ret)?>,
+            )*
+        }
+
+        impl Functions {
+            pub const fn new() -> Self {
+                Self {
+                    $(
+                        $name: $crate::hooks::GameFunction::new(),
+                    )*
+                }
+            }
+        }
+
+        static mut FUNCS: Functions = Functions::new();
+
+        $(
+            #[allow(non_snake_case)]
+            pub extern "C" fn $name($($arg_name: $arg),*) $(-> $ret)? {
+                unsafe { FUNCS.$name.get()($($arg_name),*) }
+            }
+        )*
+    };
 }
 
 #[link(name = "detours", kind = "static")]
 extern "system" {
-    fn DetourTransactionBegin();
-    fn DetourUpdateThread(handle: HANDLE);
-    fn DetourAttach(
+    pub fn DetourTransactionBegin();
+    pub fn DetourUpdateThread(handle: HANDLE);
+    pub fn DetourAttach(
         ppPointer: *mut *const libc::c_void,
         pDetour: *const libc::c_void,
     ) -> libc::c_long;
-    fn DetourTransactionCommit();
+    pub fn DetourTransactionCommit();
+}
+
+#[derive(Debug)]
+pub(crate) struct GameFunction<T>(Option<T>);
+
+impl<T> GameFunction<T> {
+    pub const fn new() -> Self {
+        Self(None)
+    }
+
+    pub fn set(&mut self, ptr: *const ()) {
+        self.0 = unsafe { Some(mem::transmute_copy(&ptr)) };
+    }
+
+    pub fn get(&self) -> &T {
+        match &self.0 {
+            None => panic!("function not initialized"),
+            Some(ptr) => ptr,
+        }
+    }
 }
 
 #[derive(Debug)]
 pub(crate) struct HookableFunction<T> {
-    ptr: Option<T>,
-}
-
-impl<T> Default for HookableFunction<T> {
-    fn default() -> Self {
-        Self { ptr: Default::default() }
-    }
-}
-
-impl<T> AsRef<T> for HookableFunction<T> {
-    fn as_ref(&self) -> &T {
-        match &self.ptr {
-            None => panic!("function not initialized"),
-            Some(ptr) => ptr,
-        }
-    }
-}
-
-impl<T> AsMut<T> for HookableFunction<T> {
-    fn as_mut(&mut self) -> &mut T {
-        match &mut self.ptr {
-            None => panic!("function not initialized"),
-            Some(ptr) => ptr,
-        }
-    }
+    original: Option<T>,
+    hook: T,
 }
 
 impl<T> HookableFunction<T> {
-    pub const fn new() -> Self {
-        Self { ptr: None }
+    pub const fn new(hook: T) -> Self {
+        Self { original: None, hook }
     }
 
-    pub fn set(&mut self, ptr: *const ()) {
-        self.ptr = Some(unsafe { mem::transmute_copy(&ptr) });
+    pub fn original(&self) -> &T {
+        match &self.original {
+            None => panic!("function not initialized"),
+            Some(ptr) => ptr,
+        }
+    }
+
+    /// Must be called after [`DetourTransactionBegin`] and before
+    /// [`DetourTransactionCommit`]
+    pub fn find_attach(&mut self, module: impl Into<HMODULE>, symbol_name: &CStr) {
+        let Some(original) =
+            (unsafe { GetProcAddress(module.into(), PCSTR(symbol_name.as_ptr() as _)) })
+        else {
+            panic!("Failed to find {:?}", symbol_name);
+        };
+        self.attach(original as _);
+    }
+
+    /// Must be called after [`DetourTransactionBegin`] and before
+    /// [`DetourTransactionCommit`]
+    pub fn attach(&mut self, original: *const ()) -> i32 {
+        self.original = Some(unsafe { mem::transmute_copy(&original) });
+        unsafe {
+            DetourAttach(
+                self.original.as_ref().unwrap() as *const _ as _,
+                mem::transmute_copy(&self.hook),
+            )
+        }
     }
 }

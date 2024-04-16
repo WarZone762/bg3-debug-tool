@@ -12,6 +12,8 @@ BUILD_TYPE = "release"
 command = "cargo"
 args = ["clean"]
 
+#TODO: xwin
+
 [tasks.build]
 command = "cargo"
 args = ["build", "--profile=${PROFILE_NAME}"]

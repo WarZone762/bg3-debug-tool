@@ -241,7 +241,7 @@ static_symbols! {
     ls__FileReader__ctor: fn(),
     ls__FileReader__dtor: fn(),
     ls__PathRoots: *const (),
-    App__Ctor: fn(),
+    App__Ctor: extern "C" fn(*const ()) -> *const (),
     App__UpdatePaths: fn(),
 
     ecl__EoCClient: *const (),
@@ -255,7 +255,7 @@ static_symbols! {
     esv__gGameStateEventManager: *const (),
     ecl__GameStateThreaded__GameStateWorker__DoWork: fn(),
     esv__GameStateThreaded__GameStateWorker__DoWork: fn(),
-    ecl__GameStateMachine__Update: fn(),
+    ecl__GameStateMachine__Update: extern "C" fn(*const (), *const ()),
     esv__GameStateMachine__Update: fn(),
     App__LoadGraphicSettings: fn(),
 

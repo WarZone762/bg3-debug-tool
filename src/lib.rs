@@ -5,31 +5,26 @@ mod binary_mappings;
 mod game_definitions;
 mod globals;
 mod hooks;
-mod hud;
+mod menu;
 mod script_extender;
 mod wrappers;
 
-use std::{io::BufRead, mem, panic, thread};
+use std::{io::BufRead, panic, thread};
 
 use hudhook::{hooks::dx11::ImguiDx11Hooks, Hudhook};
-use widestring::u16cstr;
 use windows::{
-    core::{s, w, IUnknown, HRESULT, PCWSTR},
+    core::w,
     Win32::{
-        Foundation::{GetLastError, BOOL, HANDLE, HMODULE},
+        Foundation::{BOOL, HMODULE},
         System::{
-            LibraryLoader::{GetModuleHandleW, GetProcAddress, LoadLibraryW},
-            SystemInformation::GetSystemDirectoryW,
+            LibraryLoader::GetModuleHandleW,
             SystemServices::{DLL_PROCESS_ATTACH, DLL_PROCESS_DETACH},
         },
     },
 };
 
 use crate::{
-    binary_mappings::init_static_symbols,
-    game_definitions::{FixedString, GamePtr, LSStringView},
-    globals::Globals,
-    script_extender::LibraryManager,
+    binary_mappings::init_static_symbols, globals::Globals, script_extender::LibraryManager,
     wrappers::osiris::OsiCall,
 };
 
@@ -72,19 +67,18 @@ fn main() {
     }
 
     init_static_symbols().unwrap();
-    hooks::osiris::init().unwrap();
+    hooks::osiris::hook().unwrap();
 
+    let menu = menu::Menu::new();
     let is_dx11 = unsafe { GetModuleHandleW(w!("bg3_dx11.exe")) }.is_ok_and(|x| !x.is_invalid());
     if is_dx11 {
         std::thread::spawn(move || {
-            if let Err(e) =
-                Hudhook::builder().with::<ImguiDx11Hooks>(hud::Hud::new()).build().apply()
-            {
+            if let Err(e) = Hudhook::builder().with::<ImguiDx11Hooks>(menu).build().apply() {
                 err!("Couldn't apply hooks: {e:?}");
             }
         });
     } else {
-        hooks::vulkan::init().unwrap();
+        hooks::vulkan::init(menu).unwrap();
     }
 
     thread::spawn(console_thread);
@@ -160,34 +154,5 @@ fn console_thread() {
             }
             c => warn!("unknown command '{c}'"),
         }
-    }
-}
-
-fn print_bytes(buf: &[u8], width: usize) {
-    let mut chars = String::with_capacity(width);
-    let mut bytes = String::with_capacity(width * 3);
-
-    for (i, b) in buf.iter().enumerate() {
-        let c = *b as char;
-
-        if c.is_ascii_graphic() {
-            chars.push(c);
-        } else {
-            chars.push('.');
-        }
-
-        bytes.push_str(&format!("{:02X}", c as u8));
-
-        if (i + 1) % width == 0 {
-            info!("{bytes}    {chars}");
-            chars.clear();
-            bytes.clear();
-        } else {
-            bytes.push(' ');
-        }
-    }
-
-    if buf.len() % width != 0 {
-        info!("{bytes}    {chars}");
     }
 }

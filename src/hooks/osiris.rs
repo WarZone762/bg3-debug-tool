@@ -6,7 +6,7 @@ use windows::{
 };
 
 use crate::{
-    err,
+    err, fn_definitions,
     game_definitions::{GamePtr, OsiArgumentDesc, OsirisStaticGlobals},
     globals::Globals,
     hook_definitions,
@@ -23,22 +23,22 @@ osiris("Osiris.dll") {
 
             Globals::osiris_globals_set(find_osiris_globals(osiris_ctor_proc));
 
-            HOOKS.Call.set(*(b as *const *const ()).add(1));
-            HOOKS.Query.set(*(b as *const *const ()).add(2));
+            FUNCS.Call.set(*(b as *const *const ()).add(1));
+            FUNCS.Query.set(*(b as *const *const ()).add(2));
 
             original::RegisterDivFunctions(a, b)
         }
     }
+}
+}
+
+fn_definitions! {
+osiris("Osiris.dll") {
+    #[no_init = yes]
+    fn Call(handle: u32, params: GamePtr<OsiArgumentDesc>) -> bool;
 
     #[no_init = yes]
-    fn Call(handle: u32, params: GamePtr<OsiArgumentDesc>) -> bool {
-        original::Call(handle, params)
-    }
-
-    #[no_init = yes]
-    fn Query(handle: u32, params: GamePtr<OsiArgumentDesc>) -> bool {
-        original::Query(handle, params)
-    }
+    fn Query(handle: u32, params: GamePtr<OsiArgumentDesc>) -> bool;
 }
 }
 

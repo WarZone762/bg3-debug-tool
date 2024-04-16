@@ -1,3 +1,5 @@
+#![windows_subsystem = "windows"]
+
 use std::{mem, ptr};
 
 use ash::vk::SECURITY_ATTRIBUTES;
@@ -15,7 +17,8 @@ fn main() {
     let mut proc_info = PROCESS_INFORMATION::default();
     unsafe {
         DetourCreateProcessWithDllExA(
-            s!("bg3_dx11.exe"),
+            // s!("bg3_dx11.exe"),
+            s!("bg3.exe"),
             PSTR::null(),
             ptr::null(),
             ptr::null(),
@@ -27,7 +30,7 @@ fn main() {
             &mut proc_info,
             s!("bg3_debug_tool.dll"),
             None,
-        )
+        );
     };
 }
 #[link(name = "detours", kind = "static")]

@@ -1,6 +1,6 @@
-use std::ptr;
+use std::{mem, ops::DerefMut, ptr, sync::Mutex};
 
-use ash::{vk, RawPtr};
+use ash::vk;
 use windows::Win32::{
     Foundation::{BOOL, HWND, LPARAM, LRESULT, WPARAM},
     System::Threading::GetCurrentThread,
@@ -13,8 +13,15 @@ use windows::Win32::{
 use crate::{
     hook_definitions,
     hooks::{DetourTransactionBegin, DetourTransactionCommit, DetourUpdateThread},
-    info, init_hook,
+    info,
 };
+
+pub(crate) fn init(menu: impl ImGuiMenu + 'static) -> anyhow::Result<()> {
+    unsafe {
+        DATA_BUILDER.lock().unwrap().menu = Some(Box::new(menu));
+    }
+    hook()
+}
 
 hook_definitions! {
 vulkan("vulkan-1.dll") {
@@ -35,10 +42,15 @@ vulkan("vulkan-1.dll") {
 
         let res = original::vkCreateInstance(p_create_info, p_allocator, p_instance);
 
+        let instance = unsafe {
+            ash::Instance::load(ash::Entry::linked().static_fn(), *p_instance)
+        };
         unsafe {
-            if INSTANCE == vk::Instance::null() {
-                INSTANCE = *p_instance;
-            }
+        if let Some(vk_data) = DATA.lock().unwrap().as_mut() {
+            vk_data.instance = instance;
+        } else {
+            DATA_BUILDER.lock().unwrap().instance = Some(instance);
+        }
         }
 
         res
@@ -50,52 +62,119 @@ vulkan("vulkan-1.dll") {
         p_allocator: *const vk::AllocationCallbacks,
         p_device: *mut vk::Device,
     ) -> vk::Result {
-        let ret = original::vkCreateDevice(physical_device, p_create_info, p_allocator, p_device);
+        let res = original::vkCreateDevice(
+            physical_device,
+            p_create_info,
+            p_allocator,
+            p_device
+        );
 
         unsafe {
-            ALLOCATOR  = p_allocator.as_ref();
-            DEV = *p_device;
-            PHYSICAL_DEV = physical_device;
-            init_vulkan();
+            if let Some(vk_data) = DATA.lock().unwrap().as_mut() {
+                vk_data.physical_dev = physical_device;
+                vk_data.dev = ash::Device::load(vk_data.instance.fp_v1_0(), *p_device);
 
-            let create_swapchain = instance()
-                .get_device_proc_addr(DEV, c"vkCreateSwapchainKHR".as_ptr())
-                .unwrap();
+                let families = vk_data
+                    .instance
+                    .get_physical_device_queue_family_properties(
+                        vk_data.physical_dev
+                    );
 
-            DetourTransactionBegin();
-            DetourUpdateThread(GetCurrentThread());
+                vk_data.queue_family = families
+                    .iter()
+                    .position(|x| x.queue_flags.contains(vk::QueueFlags::GRAPHICS))
+                    .unwrap() as _;
 
-            init_hook!(vkCreateSwapchainKHR, create_swapchain);
+                // TODO
+                // let create_pipeline_cache = vk_data
+                //     .instance
+                //     .get_device_proc_addr(*p_device, c"vkCreatePipelineCache".as_ptr())
+                //     .unwrap();
+                // let create_swapchain = vk_data
+                //     .instance
+                //     .get_device_proc_addr(*p_device, c"vkCreateSwapchainKHR".as_ptr())
+                //     .unwrap();
+                // let queue_present = vk_data
+                //     .instance
+                //     .get_device_proc_addr(*p_device, c"vkQueuePresentKHR".as_ptr())
+                //     .unwrap();
+                //
+                // DetourTransactionBegin();
+                // DetourUpdateThread(GetCurrentThread());
+                //
+                // HOOKS.vkCreatePipelineCache.attach(create_pipeline_cache as _);
+                // HOOKS.vkCreateSwapchainKHR.attach(create_swapchain as _);
+                // HOOKS.vkQueuePresentKHR.attach(queue_present as _);
+                //
+                // DetourTransactionCommit();
+            } else {
+                let mut builder = DATA_BUILDER.lock().unwrap();
+                builder.physical_dev = Some(physical_device);
+                builder.dev = Some(ash::Device::load(builder.instance().fp_v1_0(), *p_device));
 
-            DetourTransactionCommit();
-        }
+                let families = builder
+                    .instance()
+                    .get_physical_device_queue_family_properties(
+                        builder.physical_dev.unwrap()
+                    );
 
-        ret
-    }
+                builder.queue_family = Some(
+                    families
+                        .iter()
+                        .position(|x| x.queue_flags.contains(vk::QueueFlags::GRAPHICS))
+                        .unwrap() as _,
+                    );
 
-    fn vkAcquireNextImageKHR(
-        device: vk::Device,
-        swapchain: vk::SwapchainKHR,
-        timeout: u64,
-        semaphore: vk::Semaphore,
-        fence: vk::Fence,
-        p_image_index: *mut u32,
-    ) -> vk::Result {
-        let res = original::vkAcquireNextImageKHR(device, swapchain, timeout, semaphore, fence, p_image_index);
+                let create_pipeline_cache = builder
+                    .instance()
+                    .get_device_proc_addr(*p_device, c"vkCreatePipelineCache".as_ptr())
+                    .unwrap();
+                let create_swapchain = builder
+                    .instance()
+                    .get_device_proc_addr(*p_device, c"vkCreateSwapchainKHR".as_ptr())
+                    .unwrap();
+                let queue_present = builder
+                    .instance()
+                    .get_device_proc_addr(*p_device, c"vkQueuePresentKHR".as_ptr())
+                    .unwrap();
 
-        unsafe {
-            CUR_FRAME = *p_image_index;
+                DetourTransactionBegin();
+                DetourUpdateThread(GetCurrentThread());
+
+                HOOKS.vkCreatePipelineCache.attach(create_pipeline_cache as _);
+                HOOKS.vkCreateSwapchainKHR.attach(create_swapchain as _);
+                HOOKS.vkQueuePresentKHR.attach(queue_present as _);
+
+                DetourTransactionCommit();
+            }
         }
 
         res
     }
 
-    fn vkAcquireNextImage2KHR(
+    #[no_init = yes]
+    fn vkCreatePipelineCache(
         device: vk::Device,
-        p_acquire_info: *const vk::AcquireNextImageInfoKHR,
-        p_image_index: *mut u32,
+        p_create_info: *const vk::PipelineCacheCreateInfo,
+        p_allocator: *const vk::AllocationCallbacks,
+        p_pipeline_cache: *mut vk::PipelineCache,
     ) -> vk::Result {
-        original::vkAcquireNextImage2KHR(device, p_acquire_info, p_image_index)
+        let res = original::vkCreatePipelineCache(
+            device,
+            p_create_info,
+            p_allocator,
+            p_pipeline_cache
+        );
+
+        unsafe {
+            if let Some(vk_data) = DATA.lock().unwrap().as_mut() {
+                vk_data.pipeline_cache = *p_pipeline_cache
+            } else {
+                DATA_BUILDER.lock().unwrap().pipeline_cache = Some(*p_pipeline_cache);
+            }
+        }
+
+        res
     }
 
     #[no_init = yes]
@@ -105,19 +184,54 @@ vulkan("vulkan-1.dll") {
         p_allocator: *const vk::AllocationCallbacks,
         p_swapchain: *mut vk::SwapchainKHR,
     ) -> vk::Result {
-        cleanup_render_target();
+        let res = original::vkCreateSwapchainKHR(device, p_create_info, p_allocator, p_swapchain);
+
         unsafe {
-            IMAGE_EXTENT = (*p_create_info).image_extent;
+            let mut vk_data = DATA.lock().unwrap();
+            if let Some(vk_data) = vk_data.as_mut() {
+                let old = mem::replace(
+                    &mut vk_data.swapchain_data,
+                    SwapchainData::new(
+                        *p_swapchain,
+                        p_create_info.as_ref().unwrap(),
+                        &vk_data.instance,
+                        &vk_data.dev,
+                        vk_data.queue_family,
+                    )
+                );
+                old.destroy(&vk_data.dev);
+            } else {
+                let mut builder = DATA_BUILDER.lock().unwrap();
+                builder.swapchain_data = Some(SwapchainData::new(
+                    *p_swapchain,
+                    p_create_info.as_ref().unwrap(),
+                    builder.instance(),
+                    builder.dev.as_ref().unwrap(),
+                    builder.queue_family.unwrap(),
+                ));
+
+                *vk_data = Some(builder.build());
+            }
         }
 
-        original::vkCreateSwapchainKHR(device, p_create_info, p_allocator, p_swapchain)
+        res
     }
 
+    #[no_init = yes]
     fn vkQueuePresentKHR(
         queue: vk::Queue,
         p_present_info: *const vk::PresentInfoKHR,
     ) -> vk::Result {
-        render_im_gui_vulkan(queue, p_present_info);
+        unsafe {
+            DATA
+                .lock()
+                .unwrap()
+                .as_mut()
+                .unwrap()
+                .present(
+                    (p_present_info as *mut vk::PresentInfoKHR).as_mut().unwrap()
+                );
+        }
 
         original::vkQueuePresentKHR(queue, p_present_info)
     }
@@ -125,122 +239,202 @@ vulkan("vulkan-1.dll") {
 }
 }
 
-const MIN_IMAGE_COUNT: u32 = 2;
+pub(crate) struct VulkanData<M: ImGuiMenu> {
+    instance: ash::Instance,
+    physical_dev: vk::PhysicalDevice,
+    dev: ash::Device,
+    queue_family: u32,
+    queue: vk::Queue,
+    pipeline_cache: vk::PipelineCache,
+    descriptor_pool: vk::DescriptorPool,
+    swapchain_data: SwapchainData,
 
-static mut FRAMES: [ImGui_ImplVulkanH_Frame; 4] = [ImGui_ImplVulkanH_Frame::new(); 4];
-static mut FRAME_SEMAPHORES: [ImGui_ImplVulkanH_FrameSemaphores; 4] =
-    [ImGui_ImplVulkanH_FrameSemaphores::new(); 4];
-static mut CUR_FRAME: u32 = 0;
-
-static mut ALLOCATOR: Option<&vk::AllocationCallbacks> = None;
-static mut INSTANCE: vk::Instance = vk::Instance::null();
-static mut DEV: vk::Device = vk::Device::null();
-static mut PHYSICAL_DEV: vk::PhysicalDevice = vk::PhysicalDevice::null();
-static mut QUEUE_FAMILY: u32 = u32::MAX - 1;
-static mut DESCRIPTOR_POOL: vk::DescriptorPool = vk::DescriptorPool::null();
-static mut RENDER_PASS: vk::RenderPass = vk::RenderPass::null();
-static mut IMAGE_EXTENT: vk::Extent2D = vk::Extent2D { width: 1920, height: 1080 };
-
-static mut INSTANCE_LOADED: Option<ash::Instance> = None;
-static mut DEV_LOADED: Option<ash::Device> = None;
-
-fn instance() -> &'static ash::Instance {
-    unsafe { INSTANCE_LOADED.as_ref().unwrap() }
+    imgui_ctx: imgui::Context,
+    imgui_init: bool,
+    menu: M,
 }
 
-fn dev() -> &'static ash::Device {
-    unsafe { DEV_LOADED.as_ref().unwrap() }
-}
+impl<M: ImGuiMenu> VulkanData<M> {
+    fn present(&mut self, present_info: &mut vk::PresentInfoKHR) {
+        unsafe {
+            if present_info.swapchain_count != 1
+                || *present_info.p_swapchains != self.swapchain_data.swapchain
+            {
+                return;
+            }
 
-fn render_im_gui_vulkan(queue: vk::Queue, p_present_info: *const vk::PresentInfoKHR) {
-    unsafe {
-        let swapchain = *(*p_present_info).p_swapchains;
-        if FRAMES[0].framebuffer == vk::Framebuffer::null() {
-            create_render_target(swapchain);
+            let image = &self.swapchain_data.images[*present_info.p_image_indices as usize];
+            self.dev.wait_for_fences(&[image.fence], true, u64::MAX).unwrap();
+            self.dev.reset_fences(&[image.fence]).unwrap();
+            self.dev
+                .reset_command_buffer(image.command_buffer, vk::CommandBufferResetFlags::empty())
+                .unwrap();
+
+            self.dev
+                .begin_command_buffer(
+                    image.command_buffer,
+                    &vk::CommandBufferBeginInfo::builder()
+                        .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT),
+                )
+                .unwrap();
+
+            let mut barrier = vk::ImageMemoryBarrier::builder()
+                .old_layout(vk::ImageLayout::PRESENT_SRC_KHR)
+                .new_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+                .src_queue_family_index(self.queue_family)
+                .dst_queue_family_index(self.queue_family)
+                .image(image.image)
+                .subresource_range(vk::ImageSubresourceRange {
+                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                    base_mip_level: 0,
+                    level_count: 1,
+                    base_array_layer: 0,
+                    layer_count: 1,
+                })
+                .src_access_mask(all_read_flags())
+                .dst_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE);
+
+            self.dev.cmd_pipeline_barrier(
+                image.command_buffer,
+                vk::PipelineStageFlags::ALL_COMMANDS,
+                vk::PipelineStageFlags::ALL_COMMANDS,
+                vk::DependencyFlags::empty(),
+                &[],
+                &[],
+                &[*barrier],
+            );
+
+            let clear_values = [vk::ClearValue::default()];
+            let info = vk::RenderPassBeginInfo::builder()
+                .render_pass(self.swapchain_data.render_pass)
+                .framebuffer(image.framebuffer)
+                .render_area(*vk::Rect2D::builder().extent(self.swapchain_data.extent))
+                .clear_values(&clear_values);
+            self.dev.cmd_begin_render_pass(
+                image.command_buffer,
+                &info,
+                vk::SubpassContents::INLINE,
+            );
+
+            if !self.imgui_init {
+                let info = ImGui_ImplVulkan_InitInfo {
+                    instance: self.instance.handle(),
+                    physical_device: self.physical_dev,
+                    device: self.dev.handle(),
+                    queue_family: self.queue_family,
+                    queue: self.queue,
+                    pipeline_cache: self.pipeline_cache,
+                    descriptor_pool: self.descriptor_pool,
+                    min_image_count: self.swapchain_data.images.len() as _,
+                    image_count: self.swapchain_data.images.len() as _,
+                    MSAA_samples: vk::SampleCountFlags::TYPE_1,
+                    ..ImGui_ImplVulkan_InitInfo::new()
+                };
+                ImGui_ImplVulkan_Init(&info, self.swapchain_data.render_pass);
+                ImGui_ImplVulkan_CreateFontsTexture(self.swapchain_data.images[0].command_buffer);
+
+                self.imgui_init = true;
+            }
+
+            ImGui_ImplVulkan_NewFrame();
+            ImGui_ImplWin32_NewFrame();
+
+            let ui = self.imgui_ctx.frame();
+            self.menu.render(ui);
+            self.imgui_ctx.render();
+
+            ImGui_ImplVulkan_RenderDrawData(
+                self.imgui_ctx.render(),
+                image.command_buffer,
+                vk::Pipeline::null(),
+            );
+
+            self.dev.cmd_end_render_pass(image.command_buffer);
+
+            (barrier.src_queue_family_index, barrier.dst_queue_family_index) =
+                (barrier.dst_queue_family_index, barrier.src_queue_family_index);
+            (barrier.old_layout, barrier.new_layout) = (barrier.new_layout, barrier.old_layout);
+            barrier.src_access_mask = vk::AccessFlags::COLOR_ATTACHMENT_WRITE;
+            barrier.dst_access_mask = all_read_flags();
+
+            self.dev.cmd_pipeline_barrier(
+                image.command_buffer,
+                vk::PipelineStageFlags::ALL_COMMANDS,
+                vk::PipelineStageFlags::ALL_COMMANDS,
+                vk::DependencyFlags::empty(),
+                &[],
+                &[],
+                &[*barrier],
+            );
+            self.dev.end_command_buffer(image.command_buffer).unwrap();
+
+            let signal_semaphores = [image.semaphore];
+            let command_buffers = [image.command_buffer];
+            let mut submit_info = vk::SubmitInfo::builder()
+                .command_buffers(&command_buffers)
+                .wait_dst_stage_mask(&[
+                    vk::PipelineStageFlags::ALL_COMMANDS,
+                    vk::PipelineStageFlags::ALL_COMMANDS,
+                    vk::PipelineStageFlags::ALL_COMMANDS,
+                ])
+                .signal_semaphores(&signal_semaphores);
+            submit_info.wait_semaphore_count = present_info.wait_semaphore_count;
+            submit_info.p_wait_semaphores = present_info.p_wait_semaphores;
+
+            self.dev.queue_submit(self.queue, &[*submit_info], image.fence).unwrap();
+
+            *(present_info.p_wait_semaphores as *mut _) = *submit_info.p_signal_semaphores;
+            present_info.wait_semaphore_count = 1;
         }
-
-        let fd = &mut FRAMES[CUR_FRAME as usize];
-
-        dev().wait_for_fences(&[fd.fence], true, u64::MAX).unwrap();
-        dev().reset_fences(&[fd.fence]).unwrap();
-
-        // dev().reset_command_pool(fd.command_pool,
-        // vk::CommandPoolResetFlags::empty()).unwrap();
-        dev()
-            .reset_command_buffer(fd.command_buffer, vk::CommandBufferResetFlags::empty())
-            .unwrap();
-        let mut info = vk::CommandBufferBeginInfo::default();
-        info.flags |= vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT;
-        dev().begin_command_buffer(fd.command_buffer, &info).unwrap();
-
-        let info = vk::RenderPassBeginInfo::builder()
-            .render_pass(RENDER_PASS)
-            .framebuffer(fd.framebuffer)
-            .render_area(*vk::Rect2D::builder().extent(IMAGE_EXTENT));
-        dev().cmd_begin_render_pass(fd.command_buffer, &info, vk::SubpassContents::INLINE);
-
-        if (*imgui::sys::igGetIO()).BackendRendererUserData.is_null() {
-            let init_info = ImGui_ImplVulkan_InitInfo {
-                instance: INSTANCE,
-                physical_device: PHYSICAL_DEV,
-                device: DEV,
-                queue_family: QUEUE_FAMILY,
-                queue,
-                pipeline_cache: vk::PipelineCache::null(),
-                descriptor_pool: DESCRIPTOR_POOL,
-                min_image_count: MIN_IMAGE_COUNT,
-                image_count: MIN_IMAGE_COUNT,
-                MSAA_samples: vk::SampleCountFlags::TYPE_1,
-                allocator: ALLOCATOR.as_raw_ptr(),
-                ..ImGui_ImplVulkan_InitInfo::new()
-            };
-            ImGui_ImplVulkan_Init(&init_info, RENDER_PASS);
-            ImGui_ImplVulkan_CreateFontsTexture(FRAMES[0].command_buffer);
-        }
-
-        ImGui_ImplVulkan_NewFrame();
-        ImGui_ImplWin32_NewFrame();
-
-        imgui::sys::igNewFrame();
-        imgui::sys::igShowDemoWindow(ptr::null_mut());
-        imgui::sys::igRender();
-
-        ImGui_ImplVulkan_RenderDrawData(
-            imgui::sys::igGetDrawData(),
-            fd.command_buffer,
-            vk::Pipeline::null(),
-        );
-
-        dev().cmd_end_render_pass(fd.command_buffer);
-        dev().end_command_buffer(fd.command_buffer).unwrap();
-
-        let cb = vk::CommandBufferSubmitInfo::builder().command_buffer(fd.command_buffer);
-
-        // let ws = vk::SemaphoreSubmitInfo::builder()
-        //     .stage_mask(vk::PipelineStageFlags2::FRAGMENT_SHADER)
-        //     .semaphore(*(*p_present_info).p_wait_semaphores)
-        //     .value(1);
-
-        let ss = vk::SemaphoreSubmitInfo::builder()
-            .semaphore(FRAME_SEMAPHORES[CUR_FRAME as usize].image_acquired_semaphore)
-            .value(1);
-
-        let command_buffer_infos = [*cb];
-        // let wain_semaphore_infos = [*ws];
-        let signal_semaphore_infos = [*ss];
-        let info = vk::SubmitInfo2::builder()
-            .command_buffer_infos(&command_buffer_infos)
-            // .wait_semaphore_infos(&)
-            .signal_semaphore_infos(&signal_semaphore_infos);
-
-        dev().queue_submit2(queue, &[*info], fd.fence).unwrap();
     }
 }
 
-fn init_vulkan() {
-    unsafe {
-        if imgui::sys::igGetCurrentContext().is_null() {
-            imgui::sys::igCreateContext(std::ptr::null_mut());
+#[derive(Clone)]
+struct VulkanDataBuilder<M: ImGuiMenu> {
+    instance: Option<ash::Instance>,
+    physical_dev: Option<vk::PhysicalDevice>,
+    dev: Option<ash::Device>,
+    queue_family: Option<u32>,
+    pipeline_cache: Option<vk::PipelineCache>,
+    swapchain_data: Option<SwapchainData>,
+    menu: Option<M>,
+}
+
+impl<M: ImGuiMenu> VulkanDataBuilder<M> {
+    pub const fn new() -> Self {
+        Self {
+            instance: None,
+            physical_dev: None,
+            dev: None,
+            queue_family: None,
+            pipeline_cache: None,
+            swapchain_data: None,
+            menu: None,
+        }
+    }
+
+    pub fn build(&mut self) -> VulkanData<M> {
+        let instance = self.instance.take().expect("Vulkan instance was not initialized");
+        let physical_dev =
+            self.physical_dev.take().expect("Vulkan physical device was not initialized");
+        let dev = self.dev.take().expect("Vulkan device was not initialized");
+        let queue_family =
+            self.queue_family.take().expect("Vulkan queue family was not initialized");
+        let pipeline_cache =
+            self.pipeline_cache.take().expect("Vulkan pipeline cache was not initialized");
+        let swapchain_data =
+            self.swapchain_data.take().expect("Vulkan swapchain data was not initialized");
+        let menu = self.menu.take().expect("ImGui menu was not initialized");
+
+        unsafe {
+            let mut imgui_ctx = imgui::Context::create();
+            imgui_ctx.set_ini_filename(None);
+            imgui_ctx.set_log_filename(None);
+            let io = imgui_ctx.io_mut();
+
+            io.config_flags |= imgui::ConfigFlags::NAV_ENABLE_KEYBOARD;
+            io.config_flags |= imgui::ConfigFlags::NAV_ENABLE_GAMEPAD;
+
             unsafe extern "system" fn is_main(handle: HWND, lparam: LPARAM) -> BOOL {
                 if GetWindow(handle, GW_OWNER) == HWND::default()
                     && IsWindowVisible(handle).as_bool()
@@ -256,6 +450,18 @@ fn init_vulkan() {
             let _ = EnumWindows(Some(is_main), LPARAM(&mut hwnd as *mut _ as _));
 
             ImGui_ImplWin32_Init(hwnd.0 as _);
+
+            let queue = dev.get_device_queue(queue_family, 0);
+
+            let pool_sizes = [*vk::DescriptorPoolSize::builder()
+                .ty(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                .descriptor_count(10)];
+
+            let info = vk::DescriptorPoolCreateInfo::builder()
+                .flags(vk::DescriptorPoolCreateFlags::FREE_DESCRIPTOR_SET)
+                .max_sets(1)
+                .pool_sizes(&pool_sizes);
+            let descriptor_pool = dev.create_descriptor_pool(&info, None).unwrap();
 
             unsafe extern "system" fn subclass_wnd_proc(
                 hwnd: HWND,
@@ -274,208 +480,218 @@ fn init_vulkan() {
 
             SetWindowSubclass(hwnd, Some(subclass_wnd_proc), 1, 0);
 
-            let io = imgui::sys::igGetIO();
-            (*io).IniFilename = ptr::null();
-            (*io).LogFilename = ptr::null();
-            (*io).ConfigFlags |= imgui::sys::ImGuiConfigFlags_NavEnableKeyboard as i32;
-            (*io).ConfigFlags |= imgui::sys::ImGuiConfigFlags_NavEnableGamepad as i32;
+            VulkanData {
+                instance,
+                physical_dev,
+                dev,
+                queue_family,
+                queue,
+                pipeline_cache,
+                descriptor_pool,
+                swapchain_data,
+
+                imgui_ctx,
+                imgui_init: false,
+                menu,
+            }
         }
+    }
 
-        INSTANCE_LOADED = Some(ash::Instance::load(ash::Entry::linked().static_fn(), INSTANCE));
-        DEV_LOADED = Some(ash::Device::load(instance().fp_v1_0(), DEV));
+    pub fn instance(&self) -> &ash::Instance {
+        self.instance.as_ref().unwrap()
+    }
+}
 
-        QUEUE_FAMILY = instance()
-            .get_physical_device_queue_family_properties(PHYSICAL_DEV)
-            .into_iter()
-            .position(|family| family.queue_flags.contains(vk::QueueFlags::GRAPHICS))
-            .unwrap() as _;
+#[derive(Debug, Clone)]
+struct SwapchainData {
+    swapchain: vk::SwapchainKHR,
+    render_pass: vk::RenderPass,
+    command_pool: vk::CommandPool,
+    images: Vec<SwapchainImageData>,
+    extent: vk::Extent2D,
+}
 
-        let pool_sizes = [
-            vk::DescriptorPoolSize { ty: vk::DescriptorType::SAMPLER, descriptor_count: 1000 },
-            vk::DescriptorPoolSize {
-                ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-                descriptor_count: 1000,
-            },
-            vk::DescriptorPoolSize {
-                ty: vk::DescriptorType::SAMPLED_IMAGE,
-                descriptor_count: 1000,
-            },
-            vk::DescriptorPoolSize {
-                ty: vk::DescriptorType::STORAGE_IMAGE,
-                descriptor_count: 1000,
-            },
-            vk::DescriptorPoolSize {
-                ty: vk::DescriptorType::UNIFORM_TEXEL_BUFFER,
-                descriptor_count: 1000,
-            },
-            vk::DescriptorPoolSize {
-                ty: vk::DescriptorType::STORAGE_TEXEL_BUFFER,
-                descriptor_count: 1000,
-            },
-            vk::DescriptorPoolSize {
-                ty: vk::DescriptorType::UNIFORM_BUFFER,
-                descriptor_count: 1000,
-            },
-            vk::DescriptorPoolSize {
-                ty: vk::DescriptorType::STORAGE_BUFFER,
-                descriptor_count: 1000,
-            },
-            vk::DescriptorPoolSize {
-                ty: vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC,
-                descriptor_count: 1000,
-            },
-            vk::DescriptorPoolSize {
-                ty: vk::DescriptorType::STORAGE_BUFFER_DYNAMIC,
-                descriptor_count: 1000,
-            },
-            vk::DescriptorPoolSize {
-                ty: vk::DescriptorType::INPUT_ATTACHMENT,
-                descriptor_count: 1000,
-            },
-        ];
-
-        let pool_info = vk::DescriptorPoolCreateInfo::builder()
-            .flags(vk::DescriptorPoolCreateFlags::FREE_DESCRIPTOR_SET)
-            .max_sets(1000 * pool_sizes.len() as u32)
-            .pool_sizes(&pool_sizes);
-        DESCRIPTOR_POOL = dev().create_descriptor_pool(&pool_info, ALLOCATOR).unwrap();
+impl SwapchainData {
+    pub unsafe fn new(
+        swapchain: vk::SwapchainKHR,
+        create_info: &vk::SwapchainCreateInfoKHR,
+        instance: &ash::Instance,
+        dev: &ash::Device,
+        queue_family: u32,
+    ) -> Self {
+        let extent = create_info.image_extent;
 
         let attachment = vk::AttachmentDescription::builder()
-            .format(vk::Format::B8G8R8A8_UNORM)
+            .format(create_info.image_format)
             .samples(vk::SampleCountFlags::TYPE_1)
             .load_op(vk::AttachmentLoadOp::LOAD)
             .store_op(vk::AttachmentStoreOp::STORE)
             .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
             .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
             .initial_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
-            .final_layout(vk::ImageLayout::PRESENT_SRC_KHR);
+            .final_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
 
         let color_attachment =
             vk::AttachmentReference::builder().layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
-
         let color_attachments = [*color_attachment];
+
         let subpass = vk::SubpassDescription::builder()
             .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
             .color_attachments(&color_attachments);
 
-        let dependency = vk::SubpassDependency::builder()
-            .src_subpass(vk::SUBPASS_EXTERNAL)
-            .src_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
-            .dst_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
-            // .src_access_mask(vk::AccessFlags::empty())
-            .src_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE)
-            .dst_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE);
-
         let attachments = [*attachment];
         let subpasses = [*subpass];
-        let dependencies = [*dependency];
-        let info = vk::RenderPassCreateInfo::builder()
-            .attachments(&attachments)
-            .subpasses(&subpasses)
-            .dependencies(&dependencies);
+        let render_pass =
+            vk::RenderPassCreateInfo::builder().attachments(&attachments).subpasses(&subpasses);
 
-        RENDER_PASS = dev().create_render_pass(&info, ALLOCATOR).unwrap();
+        let render_pass = dev.create_render_pass(&render_pass, None).unwrap();
+
+        let info = vk::CommandPoolCreateInfo::builder()
+            .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER)
+            .queue_family_index(queue_family);
+        let command_pool = dev.create_command_pool(&info, None).unwrap();
+
+        let swapchain_khr = ash::extensions::khr::Swapchain::new(instance, dev);
+
+        let images = swapchain_khr
+            .get_swapchain_images(swapchain)
+            .unwrap()
+            .into_iter()
+            .map(|image| {
+                SwapchainImageData::new(
+                    dev,
+                    image,
+                    command_pool,
+                    render_pass,
+                    create_info.image_format,
+                    extent,
+                )
+            })
+            .collect();
+
+        Self { swapchain, render_pass, command_pool, images, extent }
+    }
+
+    pub fn destroy(mut self, dev: &ash::Device) {
+        unsafe {
+            if self.render_pass != vk::RenderPass::null() {
+                dev.destroy_render_pass(self.render_pass, None);
+            }
+
+            if self.command_pool != vk::CommandPool::null() {
+                dev.destroy_command_pool(self.command_pool, None);
+            }
+
+            for i in self.images.drain(..) {
+                i.destroy(dev);
+            }
+        }
     }
 }
 
-fn create_render_target(swapchain: vk::SwapchainKHR) {
-    unsafe {
-        let swapchain_ext = ash::extensions::khr::Swapchain::new(instance(), dev());
-        let backbuffers = swapchain_ext.get_swapchain_images(swapchain).unwrap();
+#[derive(Debug, Clone)]
+struct SwapchainImageData {
+    image: vk::Image,
+    framebuffer: vk::Framebuffer,
+    image_view: vk::ImageView,
+    command_buffer: vk::CommandBuffer,
+    fence: vk::Fence,
+    semaphore: vk::Semaphore,
+}
 
-        for (i, image) in backbuffers.iter().enumerate() {
-            let fd = &mut FRAMES[i];
+impl SwapchainImageData {
+    pub unsafe fn new(
+        dev: &ash::Device,
+        image: vk::Image,
+        command_pool: vk::CommandPool,
+        render_pass: vk::RenderPass,
+        format: vk::Format,
+        extent: vk::Extent2D,
+    ) -> Self {
+        let info = vk::CommandBufferAllocateInfo::builder()
+            .level(vk::CommandBufferLevel::PRIMARY)
+            .command_pool(command_pool)
+            .command_buffer_count(1);
+        let command_buffer = dev.allocate_command_buffers(&info).unwrap()[0];
 
-            fd.backbuffer = *image;
+        let info = vk::FenceCreateInfo::builder().flags(vk::FenceCreateFlags::SIGNALED);
+        let fence = dev.create_fence(&info, None).unwrap();
 
-            let info = vk::CommandPoolCreateInfo::builder()
-                .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER)
-                .queue_family_index(QUEUE_FAMILY);
-            fd.command_pool = dev().create_command_pool(&info, ALLOCATOR).unwrap();
+        let info = vk::SemaphoreCreateInfo::default();
+        let semaphore = dev.create_semaphore(&info, None).unwrap();
 
-            let info = vk::CommandBufferAllocateInfo::builder()
-                .level(vk::CommandBufferLevel::PRIMARY)
-                .command_pool(fd.command_pool)
-                .command_buffer_count(1);
-            fd.command_buffer = dev().allocate_command_buffers(&info).unwrap()[0];
-
-            let info = vk::FenceCreateInfo::builder().flags(vk::FenceCreateFlags::SIGNALED);
-            fd.fence = dev().create_fence(&info, ALLOCATOR).unwrap();
-
-            let info = vk::SemaphoreCreateInfo::default();
-            FRAME_SEMAPHORES[i].image_acquired_semaphore =
-                dev().create_semaphore(&info, ALLOCATOR).unwrap();
-            FRAME_SEMAPHORES[i].render_complete_semaphore =
-                dev().create_semaphore(&info, ALLOCATOR).unwrap();
-        }
-
-        let mut info = vk::ImageViewCreateInfo::builder()
+        let info = vk::ImageViewCreateInfo::builder()
+            .image(image)
             .view_type(vk::ImageViewType::TYPE_2D)
-            .format(vk::Format::B8G8R8A8_UNORM)
-            .subresource_range(vk::ImageSubresourceRange {
-                aspect_mask: vk::ImageAspectFlags::COLOR,
-                base_mip_level: 0,
-                level_count: 1,
-                base_array_layer: 0,
-                layer_count: 1,
-            });
+            .format(format)
+            .components(vk::ComponentMapping {
+                r: vk::ComponentSwizzle::IDENTITY,
+                g: vk::ComponentSwizzle::IDENTITY,
+                b: vk::ComponentSwizzle::IDENTITY,
+                a: vk::ComponentSwizzle::IDENTITY,
+            })
+            .subresource_range(
+                *vk::ImageSubresourceRange::builder()
+                    .aspect_mask(vk::ImageAspectFlags::COLOR)
+                    .base_mip_level(0)
+                    .level_count(1)
+                    .base_array_layer(0)
+                    .layer_count(1),
+            );
+        let image_view = dev.create_image_view(&info, None).unwrap();
 
-        for fd in FRAMES.iter_mut().take(backbuffers.len()) {
-            info.image = fd.backbuffer;
-            fd.backbuffer_view = dev().create_image_view(&info, ALLOCATOR).unwrap();
-        }
-
-        let mut info = vk::FramebufferCreateInfo::builder()
-            .render_pass(RENDER_PASS)
-            .attachment_count(1)
-            .width(IMAGE_EXTENT.width)
-            .height(IMAGE_EXTENT.height)
+        let attachments = [image_view];
+        let info = vk::FramebufferCreateInfo::builder()
+            .render_pass(render_pass)
+            .attachments(&attachments)
+            .width(extent.width)
+            .height(extent.height)
             .layers(1);
 
-        for fd in FRAMES.iter_mut().take(backbuffers.len()) {
-            info.p_attachments = &fd.backbuffer_view;
-            fd.framebuffer = dev().create_framebuffer(&info, ALLOCATOR).unwrap();
+        let framebuffer = dev.create_framebuffer(&info, None).unwrap();
+
+        Self { image, framebuffer, image_view, command_buffer, fence, semaphore }
+    }
+
+    pub fn destroy(self, dev: &ash::Device) {
+        unsafe {
+            if self.framebuffer != vk::Framebuffer::null() {
+                dev.destroy_framebuffer(self.framebuffer, None);
+            }
+            if self.image_view != vk::ImageView::null() {
+                dev.destroy_image_view(self.image_view, None);
+            }
+            // if self.command_buffer != vk::CommandBuffer::null() {
+            //     dev.free_command_buffers(command_pool, &[self.command_buffer],
+            // None); }
+            if self.fence != vk::Fence::null() {
+                dev.destroy_fence(self.fence, None);
+            }
+            if self.semaphore != vk::Semaphore::null() {
+                dev.destroy_semaphore(self.semaphore, None);
+            }
         }
     }
 }
 
-fn cleanup_render_target() {
-    unsafe {
-        for frame in FRAMES.iter_mut() {
-            if frame.fence != vk::Fence::null() {
-                dev().destroy_fence(frame.fence, ALLOCATOR);
-                frame.fence = vk::Fence::null();
-            }
-            if frame.command_buffer != vk::CommandBuffer::null() {
-                dev().free_command_buffers(frame.command_pool, &[frame.command_buffer]);
-                frame.command_buffer = vk::CommandBuffer::null();
-            }
-            if frame.command_pool != vk::CommandPool::null() {
-                dev().destroy_command_pool(frame.command_pool, ALLOCATOR);
-                frame.command_pool = vk::CommandPool::null();
-            }
-            if frame.backbuffer_view != vk::ImageView::null() {
-                dev().destroy_image_view(frame.backbuffer_view, ALLOCATOR);
-                frame.backbuffer_view = vk::ImageView::null();
-            }
-            if frame.framebuffer != vk::Framebuffer::null() {
-                dev().destroy_framebuffer(frame.framebuffer, ALLOCATOR);
-                frame.framebuffer = vk::Framebuffer::null();
-            }
-        }
-
-        for semaphores in FRAME_SEMAPHORES.iter_mut() {
-            if semaphores.image_acquired_semaphore != vk::Semaphore::null() {
-                dev().destroy_semaphore(semaphores.image_acquired_semaphore, ALLOCATOR);
-                semaphores.image_acquired_semaphore = vk::Semaphore::null();
-            }
-            if semaphores.render_complete_semaphore != vk::Semaphore::null() {
-                dev().destroy_semaphore(semaphores.render_complete_semaphore, ALLOCATOR);
-                semaphores.render_complete_semaphore = vk::Semaphore::null();
-            }
-        }
-    }
+#[inline]
+fn all_read_flags() -> vk::AccessFlags {
+    vk::AccessFlags::INDIRECT_COMMAND_READ
+        | vk::AccessFlags::INDEX_READ
+        | vk::AccessFlags::VERTEX_ATTRIBUTE_READ
+        | vk::AccessFlags::UNIFORM_READ
+        | vk::AccessFlags::INPUT_ATTACHMENT_READ
+        | vk::AccessFlags::SHADER_READ
+        | vk::AccessFlags::COLOR_ATTACHMENT_READ
+        | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_READ
+        | vk::AccessFlags::TRANSFER_READ
+        | vk::AccessFlags::HOST_READ
+        | vk::AccessFlags::MEMORY_READ
 }
+
+static mut DATA: Mutex<Option<VulkanData<Box<dyn ImGuiMenu>>>> = Mutex::new(None);
+static mut DATA_BUILDER: Mutex<VulkanDataBuilder<Box<dyn ImGuiMenu>>> =
+    Mutex::new(VulkanDataBuilder::new());
 
 #[link(name = "imgui_backends", kind = "static")]
 extern "C" {
@@ -487,7 +703,7 @@ extern "C" {
     fn ImGui_ImplVulkan_NewFrame();
     fn ImGui_ImplVulkan_CreateFontsTexture(command_buffer: vk::CommandBuffer) -> bool;
     fn ImGui_ImplVulkan_RenderDrawData(
-        draw_data: *const imgui::sys::ImDrawData,
+        draw_data: *const imgui::DrawData,
         command: vk::CommandBuffer,
         pipeline: vk::Pipeline,
     );
@@ -532,44 +748,12 @@ impl ImGui_ImplVulkan_InitInfo {
     }
 }
 
-#[repr(C)]
-#[derive(Clone, Copy, Debug)]
-#[allow(non_camel_case_types)]
-struct ImGui_ImplVulkanH_Frame {
-    command_pool: vk::CommandPool,
-    command_buffer: vk::CommandBuffer,
-    fence: vk::Fence,
-    backbuffer: vk::Image,
-    backbuffer_view: vk::ImageView,
-    framebuffer: vk::Framebuffer,
+pub(crate) trait ImGuiMenu {
+    fn render(&mut self, ui: &mut imgui::Ui);
 }
 
-impl ImGui_ImplVulkanH_Frame {
-    pub const fn new() -> Self {
-        Self {
-            command_pool: vk::CommandPool::null(),
-            command_buffer: vk::CommandBuffer::null(),
-            fence: vk::Fence::null(),
-            backbuffer: vk::Image::null(),
-            backbuffer_view: vk::ImageView::null(),
-            framebuffer: vk::Framebuffer::null(),
-        }
-    }
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, Debug)]
-#[allow(non_camel_case_types)]
-struct ImGui_ImplVulkanH_FrameSemaphores {
-    image_acquired_semaphore: vk::Semaphore,
-    render_complete_semaphore: vk::Semaphore,
-}
-
-impl ImGui_ImplVulkanH_FrameSemaphores {
-    pub const fn new() -> Self {
-        Self {
-            image_acquired_semaphore: vk::Semaphore::null(),
-            render_complete_semaphore: vk::Semaphore::null(),
-        }
+impl<M: ImGuiMenu + ?Sized> ImGuiMenu for Box<M> {
+    fn render(&mut self, ui: &mut imgui::Ui) {
+        Box::deref_mut(self).render(ui);
     }
 }
