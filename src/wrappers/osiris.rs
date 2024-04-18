@@ -7,7 +7,7 @@ use crate::{
     game_definitions::{OsiArgumentDesc, OsiArgumentValue, OsiStringOwned, ValueType},
     globals::Globals,
     hooks::osiris,
-    info, warn,
+    warn,
 };
 
 fn osi_get_arg_types(name: &str) -> Option<()> {
@@ -83,13 +83,9 @@ impl OsiCall {
 
         let mut in_args_count = 0;
         for (i, arg) in (&osi_fn.signatrue.params.params).into_iter().enumerate() {
-            if osi_fn.signatrue.out_param_list.is_out_param(i) {
-                info!("out param at {i}: {arg:?}");
-            } else {
+            if !osi_fn.signatrue.out_param_list.is_out_param(i) {
                 let provided_type = self.args[in_args_count].to_ffi().type_id;
-                if provided_type == arg.r#type {
-                    info!("in param at {i}: {arg:?}");
-                } else {
+                if provided_type != arg.r#type {
                     warn!(
                         "in param {i} wrong type: expected {:?}, got {provided_type:?}",
                         arg.r#type

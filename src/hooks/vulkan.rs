@@ -16,7 +16,7 @@ use crate::{
     info,
 };
 
-pub(crate) fn init(menu: impl ImGuiMenu + 'static) -> anyhow::Result<()> {
+pub(crate) fn init(menu: impl ImGuiMenu<ash::Device> + 'static) -> anyhow::Result<()> {
     unsafe {
         DATA_BUILDER.lock().unwrap().menu = Some(Box::new(menu));
     }
@@ -193,7 +193,7 @@ vulkan("vulkan-1.dll") {
                     &mut vk_data.swapchain_data,
                     SwapchainData::new(
                         *p_swapchain,
-                        p_create_info.as_ref().unwrap(),
+                        &*p_create_info,
                         &vk_data.instance,
                         &vk_data.dev,
                         vk_data.queue_family,
@@ -204,7 +204,7 @@ vulkan("vulkan-1.dll") {
                 let mut builder = DATA_BUILDER.lock().unwrap();
                 builder.swapchain_data = Some(SwapchainData::new(
                     *p_swapchain,
-                    p_create_info.as_ref().unwrap(),
+                    &*p_create_info,
                     builder.instance(),
                     builder.dev.as_ref().unwrap(),
                     builder.queue_family.unwrap(),
@@ -239,7 +239,7 @@ vulkan("vulkan-1.dll") {
 }
 }
 
-pub(crate) struct VulkanData<M: ImGuiMenu> {
+pub(crate) struct VulkanData<M: ImGuiMenu<ash::Device>> {
     instance: ash::Instance,
     physical_dev: vk::PhysicalDevice,
     dev: ash::Device,
@@ -249,12 +249,12 @@ pub(crate) struct VulkanData<M: ImGuiMenu> {
     descriptor_pool: vk::DescriptorPool,
     swapchain_data: SwapchainData,
 
-    imgui_ctx: imgui::Context,
+    ctx: imgui::Context,
     imgui_init: bool,
     menu: M,
 }
 
-impl<M: ImGuiMenu> VulkanData<M> {
+impl<M: ImGuiMenu<ash::Device>> VulkanData<M> {
     fn present(&mut self, present_info: &mut vk::PresentInfoKHR) {
         unsafe {
             if present_info.swapchain_count != 1
@@ -339,12 +339,13 @@ impl<M: ImGuiMenu> VulkanData<M> {
             ImGui_ImplVulkan_NewFrame();
             ImGui_ImplWin32_NewFrame();
 
-            let ui = self.imgui_ctx.frame();
+            self.menu.pre_render(&mut self.ctx);
+            let ui = self.ctx.new_frame();
             self.menu.render(ui);
-            self.imgui_ctx.render();
+            self.ctx.render();
 
             ImGui_ImplVulkan_RenderDrawData(
-                self.imgui_ctx.render(),
+                self.ctx.render(),
                 image.command_buffer,
                 vk::Pipeline::null(),
             );
@@ -390,7 +391,7 @@ impl<M: ImGuiMenu> VulkanData<M> {
 }
 
 #[derive(Clone)]
-struct VulkanDataBuilder<M: ImGuiMenu> {
+struct VulkanDataBuilder<M: ImGuiMenu<ash::Device>> {
     instance: Option<ash::Instance>,
     physical_dev: Option<vk::PhysicalDevice>,
     dev: Option<ash::Device>,
@@ -400,7 +401,7 @@ struct VulkanDataBuilder<M: ImGuiMenu> {
     menu: Option<M>,
 }
 
-impl<M: ImGuiMenu> VulkanDataBuilder<M> {
+impl<M: ImGuiMenu<ash::Device>> VulkanDataBuilder<M> {
     pub const fn new() -> Self {
         Self {
             instance: None,
@@ -417,23 +418,18 @@ impl<M: ImGuiMenu> VulkanDataBuilder<M> {
         let instance = self.instance.take().expect("Vulkan instance was not initialized");
         let physical_dev =
             self.physical_dev.take().expect("Vulkan physical device was not initialized");
-        let dev = self.dev.take().expect("Vulkan device was not initialized");
+        let mut dev = self.dev.take().expect("Vulkan device was not initialized");
         let queue_family =
             self.queue_family.take().expect("Vulkan queue family was not initialized");
         let pipeline_cache =
             self.pipeline_cache.take().expect("Vulkan pipeline cache was not initialized");
         let swapchain_data =
             self.swapchain_data.take().expect("Vulkan swapchain data was not initialized");
-        let menu = self.menu.take().expect("ImGui menu was not initialized");
+        let mut menu = self.menu.take().expect("ImGui menu was not initialized");
 
         unsafe {
-            let mut imgui_ctx = imgui::Context::create();
-            imgui_ctx.set_ini_filename(None);
-            imgui_ctx.set_log_filename(None);
-            let io = imgui_ctx.io_mut();
-
-            io.config_flags |= imgui::ConfigFlags::NAV_ENABLE_KEYBOARD;
-            io.config_flags |= imgui::ConfigFlags::NAV_ENABLE_GAMEPAD;
+            let mut ctx = imgui::Context::create();
+            menu.initialize(&mut ctx, &mut dev);
 
             unsafe extern "system" fn is_main(handle: HWND, lparam: LPARAM) -> BOOL {
                 if GetWindow(handle, GW_OWNER) == HWND::default()
@@ -471,7 +467,11 @@ impl<M: ImGuiMenu> VulkanDataBuilder<M> {
                 _uid_subclass: usize,
                 _dwref_data: usize,
             ) -> LRESULT {
-                if ImGui_ImplWin32_WndProcHandler(hwnd, umsg, wparam, lparam) {
+                ImGui_ImplWin32_WndProcHandler(hwnd, umsg, wparam, lparam);
+
+                let data = DATA.get_mut().unwrap();
+                let io = data.as_ref().unwrap().ctx.io();
+                if io.want_capture_mouse || io.want_capture_keyboard {
                     return LRESULT(1);
                 }
 
@@ -490,7 +490,7 @@ impl<M: ImGuiMenu> VulkanDataBuilder<M> {
                 descriptor_pool,
                 swapchain_data,
 
-                imgui_ctx,
+                ctx,
                 imgui_init: false,
                 menu,
             }
@@ -578,12 +578,12 @@ impl SwapchainData {
                 dev.destroy_render_pass(self.render_pass, None);
             }
 
-            if self.command_pool != vk::CommandPool::null() {
-                dev.destroy_command_pool(self.command_pool, None);
+            for i in self.images.drain(..) {
+                i.destroy(dev, self.command_pool);
             }
 
-            for i in self.images.drain(..) {
-                i.destroy(dev);
+            if self.command_pool != vk::CommandPool::null() {
+                dev.destroy_command_pool(self.command_pool, None);
             }
         }
     }
@@ -653,7 +653,7 @@ impl SwapchainImageData {
         Self { image, framebuffer, image_view, command_buffer, fence, semaphore }
     }
 
-    pub fn destroy(self, dev: &ash::Device) {
+    pub fn destroy(self, dev: &ash::Device, command_pool: vk::CommandPool) {
         unsafe {
             if self.framebuffer != vk::Framebuffer::null() {
                 dev.destroy_framebuffer(self.framebuffer, None);
@@ -661,9 +661,9 @@ impl SwapchainImageData {
             if self.image_view != vk::ImageView::null() {
                 dev.destroy_image_view(self.image_view, None);
             }
-            // if self.command_buffer != vk::CommandBuffer::null() {
-            //     dev.free_command_buffers(command_pool, &[self.command_buffer],
-            // None); }
+            if self.command_buffer != vk::CommandBuffer::null() {
+                dev.free_command_buffers(command_pool, &[self.command_buffer]);
+            }
             if self.fence != vk::Fence::null() {
                 dev.destroy_fence(self.fence, None);
             }
@@ -689,8 +689,8 @@ fn all_read_flags() -> vk::AccessFlags {
         | vk::AccessFlags::MEMORY_READ
 }
 
-static mut DATA: Mutex<Option<VulkanData<Box<dyn ImGuiMenu>>>> = Mutex::new(None);
-static mut DATA_BUILDER: Mutex<VulkanDataBuilder<Box<dyn ImGuiMenu>>> =
+static mut DATA: Mutex<Option<VulkanData<Box<dyn ImGuiMenu<ash::Device>>>>> = Mutex::new(None);
+static mut DATA_BUILDER: Mutex<VulkanDataBuilder<Box<dyn ImGuiMenu<ash::Device>>>> =
     Mutex::new(VulkanDataBuilder::new());
 
 #[link(name = "imgui_backends", kind = "static")]
@@ -748,11 +748,21 @@ impl ImGui_ImplVulkan_InitInfo {
     }
 }
 
-pub(crate) trait ImGuiMenu {
+pub(crate) trait ImGuiMenu<InitParam> {
+    fn initialize(&mut self, _ctx: &mut imgui::Context, _params: &mut InitParam) {}
+    fn pre_render(&mut self, _ctx: &mut imgui::Context) {}
     fn render(&mut self, ui: &mut imgui::Ui);
 }
 
-impl<M: ImGuiMenu + ?Sized> ImGuiMenu for Box<M> {
+impl<M: ImGuiMenu<InitParam> + ?Sized, InitParam> ImGuiMenu<InitParam> for Box<M> {
+    fn initialize(&mut self, ctx: &mut imgui::Context, params: &mut InitParam) {
+        Box::deref_mut(self).initialize(ctx, params);
+    }
+
+    fn pre_render(&mut self, ctx: &mut imgui::Context) {
+        Box::deref_mut(self).pre_render(ctx);
+    }
+
     fn render(&mut self, ui: &mut imgui::Ui) {
         Box::deref_mut(self).render(ui);
     }

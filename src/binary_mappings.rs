@@ -18,7 +18,9 @@ use self::mappings::{
 };
 use crate::{
     err,
-    game_definitions::{FixedString, GamePtr, GlobalTemplateManager, LSStringView},
+    game_definitions::{
+        FixedString, GamePtr, GlobalTemplateManager, LSStringView, TranslatedStringRepository,
+    },
     globals::Globals,
     warn,
 };
@@ -249,7 +251,7 @@ static_symbols! {
 
     ecl__EoCClient__HandleError: fn(),
 
-    ls__gTranslatedStringRepository: *const (),
+    ls__gTranslatedStringRepository: GamePtr<GamePtr<TranslatedStringRepository<'static>>>,
 
     ecl__gGameStateEventManager: *const (),
     esv__gGameStateEventManager: *const (),
