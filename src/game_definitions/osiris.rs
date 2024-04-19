@@ -1,6 +1,14 @@
-use std::{alloc, ffi::CStr, fmt::Debug, marker};
+use std::{
+    alloc,
+    ffi::CStr,
+    fmt::{Debug, Display},
+    marker, mem,
+};
+
+use itertools::Itertools;
 
 use super::{GamePtr, PtrOrBuf};
+use crate::warn;
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct OsirisStaticGlobals {
@@ -17,31 +25,82 @@ pub(crate) struct OsirisStaticGlobals {
 
 #[derive(Debug)]
 #[repr(C)]
-pub(crate) struct OsiArgumentDesc {
-    pub next_param: GamePtr<Self>,
+pub(crate) struct OsiArgumentDesc<'a> {
+    pub next_param: Option<&'a Self>,
     pub value: OsiArgumentValue,
 }
 
-impl OsiArgumentDesc {
-    pub fn from_value(value: OsiArgumentValue) -> GamePtr<Self> {
-        Box::leak(Box::new(Self { next_param: GamePtr::null(), value })).into()
+impl<'a> OsiArgumentDesc<'a> {
+    pub fn new(value: OsiArgumentValue) -> Self {
+        Self { next_param: None, value }
     }
 
-    pub fn from_values(mut iter: impl Iterator<Item = OsiArgumentValue>) -> GamePtr<Self> {
-        let first = Self::from_value(iter.next().unwrap_or(OsiArgumentValue::undefined()));
-        let mut last = first;
+    pub fn prepend(&'a self, value: OsiArgumentValue) -> Self {
+        Self { next_param: Some(self), value }
+    }
 
-        for e in iter {
-            let value = Self::from_value(e);
-            last.next_param = value;
-            last = value;
+    pub fn prepend_all<F, T>(&self, mut iter: impl Iterator<Item = OsiArgumentValue>, f: F) -> T
+    where
+        F: for<'b> FnOnce(&'b OsiArgumentDesc<'b>) -> T,
+    {
+        match iter.next() {
+            None => f(self),
+            Some(x) => self.prepend(x).prepend_all(iter, f),
         }
+    }
 
-        first
+    pub fn from_values<F, T>(
+        iter: impl IntoIterator<
+            Item = OsiArgumentValue,
+            IntoIter = impl DoubleEndedIterator<Item = OsiArgumentValue>,
+        >,
+        f: F,
+    ) -> T
+    where
+        F: for<'b> FnOnce(&'b OsiArgumentDesc<'b>) -> T,
+    {
+        let mut rev = iter.into_iter().rev();
+        let list = Self::new(rev.next().unwrap_or(OsiArgumentValue::undefined()));
+
+        list.prepend_all(rev, f)
+    }
+
+    pub fn iter(&self) -> OsiArgumentDescIter {
+        self.into_iter()
     }
 }
 
-#[derive(Default)]
+impl<'a> IntoIterator for &'a OsiArgumentDesc<'a> {
+    type IntoIter = OsiArgumentDescIter<'a>;
+    type Item = OsiArgumentValue;
+
+    fn into_iter(self) -> Self::IntoIter {
+        OsiArgumentDescIter { current: Some(self) }
+    }
+}
+
+impl Display for OsiArgumentDesc<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "[{}]", self.iter().join(", "))
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct OsiArgumentDescIter<'a> {
+    current: Option<&'a OsiArgumentDesc<'a>>,
+}
+
+impl<'a> Iterator for OsiArgumentDescIter<'a> {
+    type Item = OsiArgumentValue;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let value = self.current?.value;
+        self.current = self.current?.next_param;
+        Some(value)
+    }
+}
+
+#[derive(Default, Clone, Copy)]
 #[repr(C)]
 pub(crate) struct OsiArgumentValue {
     pub value: OsiArgumentValueUnion,
@@ -64,12 +123,15 @@ impl Debug for OsiArgumentValue {
             },
             ValueType::CharacterGuid => unsafe {
                 format!(
-                    "CharacterGUid({})",
+                    "CharacterGuid({})",
                     CStr::from_ptr(self.value.string as _).to_str().unwrap()
                 )
             },
             ValueType::ItemGuid => unsafe {
                 format!("ItemGuid({})", CStr::from_ptr(self.value.string as _).to_str().unwrap())
+            },
+            ValueType::Unknown21 => unsafe {
+                format!("Unknown21({})", CStr::from_ptr(self.value.string as _).to_str().unwrap())
             },
             ValueType::Undefined => "Undefined".into(),
         };
@@ -79,6 +141,25 @@ impl Debug for OsiArgumentValue {
             .field("value_type", &self.type_id)
             .field("unknown", &self.unknown)
             .finish()
+    }
+}
+
+impl Display for OsiArgumentValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.type_id {
+            ValueType::None => f.write_str("None"),
+            ValueType::Integer => unsafe { Display::fmt(&self.value.int32, f) },
+            ValueType::Integer64 => unsafe { Display::fmt(&self.value.int64, f) },
+            ValueType::Real => unsafe { Display::fmt(&self.value.float, f) },
+            ValueType::String
+            | ValueType::GuidString
+            | ValueType::CharacterGuid
+            | ValueType::ItemGuid
+            | ValueType::Unknown21
+            | ValueType::Undefined => unsafe {
+                Display::fmt(CStr::from_ptr(self.value.string as _).to_str().unwrap(), f)
+            },
+        }
     }
 }
 
@@ -135,11 +216,20 @@ impl OsiArgumentValue {
         }
     }
 
+    pub fn unknown21(string: *const i8) -> Self {
+        Self {
+            value: OsiArgumentValueUnion { string },
+            type_id: ValueType::Unknown21,
+            unknown: false,
+        }
+    }
+
     pub fn undefined() -> Self {
         Self { type_id: ValueType::Undefined, ..Default::default() }
     }
 }
 
+#[derive(Clone, Copy)]
 #[repr(C)]
 pub(crate) union OsiArgumentValueUnion {
     pub string: *const i8,
@@ -166,7 +256,29 @@ pub(crate) enum ValueType {
     GuidString = 5,
     CharacterGuid = 6,
     ItemGuid = 7,
+    Unknown21 = 21,
     Undefined = 0x7F,
+}
+
+impl From<u16> for ValueType {
+    fn from(value: u16) -> Self {
+        match value {
+            0 => Self::None,
+            1 => Self::Integer,
+            2 => Self::Integer64,
+            3 => Self::Real,
+            4 => Self::String,
+            5 => Self::GuidString,
+            6 => Self::CharacterGuid,
+            7 => Self::ItemGuid,
+            21 => Self::Unknown21,
+            0x7F => Self::Undefined,
+            x => {
+                warn!("unknown Osiris function type {x}");
+                Self::Undefined
+            }
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -183,7 +295,7 @@ pub(crate) struct FunctionDb {
 }
 
 impl FunctionDb {
-    pub fn find(&self, hash: u32, key: &OsiString) -> Option<GamePtr<GamePtr<Function>>> {
+    pub fn find(&self, hash: u32, key: &OsiStr) -> Option<GamePtr<GamePtr<Function>>> {
         let bucket = &self.hash[(hash % 0x3FF) as usize];
         bucket.node_map.find(key)
     }
@@ -192,104 +304,16 @@ impl FunctionDb {
         let bucket = &self.function_id_hash[(id % 0x3FF) as usize];
         bucket.node_map.find(id)
     }
-}
 
-#[repr(C)]
-pub(crate) struct OsiStringOwned {
-    pub string: OsiString,
-}
-
-impl OsiStringOwned {
-    pub fn from_bytes(bytes: &[u8]) -> Self {
-        if bytes.len() < 16 {
-            let mut buf = [0u8; 16];
-            buf[..bytes.len()].clone_from_slice(bytes);
-            Self {
-                string: OsiString { ptr_or_buf: PtrOrBuf { buf }, size: bytes.len(), capacity: 15 },
-            }
-        } else {
-            let ptr = unsafe {
-                let layout = alloc::Layout::from_size_align_unchecked(bytes.len() + 1, 1);
-                let ptr = alloc::alloc(layout);
-                if ptr.is_null() {
-                    alloc::handle_alloc_error(layout);
-                }
-                ptr.copy_from_nonoverlapping(bytes.as_ptr(), bytes.len());
-                ptr.add(bytes.len()).write(0);
-                ptr
-            };
-
-            Self {
-                string: OsiString {
-                    ptr_or_buf: PtrOrBuf { ptr },
-                    size: bytes.len(),
-                    capacity: bytes.len(),
-                },
-            }
-        }
-    }
-}
-
-impl Drop for OsiStringOwned {
-    fn drop(&mut self) {
-        if self.string.is_large_mode() {
-            unsafe {
-                alloc::dealloc(
-                    self.string.ptr_or_buf.ptr,
-                    alloc::Layout::from_size_align_unchecked(self.string.capacity + 1, 1),
-                );
-            }
-        }
-    }
-}
-
-#[repr(C)]
-pub(crate) struct OsiString {
-    ptr_or_buf: PtrOrBuf,
-    size: usize,
-    capacity: usize,
-}
-
-impl Debug for OsiString {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("OsiString")
-            .field("ptr_or_buf", &self.c_str())
-            .field("size", &self.size)
-            .field("capacity", &self.capacity)
-            .finish()
-    }
-}
-
-impl PartialEq for OsiString {
-    fn eq(&self, other: &Self) -> bool {
-        self.c_str().eq(other.c_str())
-    }
-}
-
-impl PartialOrd for OsiString {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        self.c_str().partial_cmp(other.c_str())
-    }
-}
-
-impl OsiString {
-    pub fn c_str(&self) -> &CStr {
-        if self.is_large_mode() {
-            unsafe { CStr::from_ptr(self.ptr_or_buf.ptr as _) }
-        } else {
-            unsafe { CStr::from_ptr(self.ptr_or_buf.buf.as_ptr() as _) }
-        }
-    }
-
-    fn is_large_mode(&self) -> bool {
-        self.capacity > 15
+    pub fn functions(&self) -> impl Iterator<Item = (&OsiStr, &Function)> {
+        self.hash.iter().flat_map(|x| x.node_map.iter()).map(|x| (&x.kv.key, x.kv.value.as_ref()))
     }
 }
 
 #[derive(Debug)]
 #[repr(C)]
 struct HashSlot {
-    node_map: TMap<OsiString, GamePtr<Function>>,
+    node_map: TMap<OsiStr, GamePtr<Function>>,
     unknown: *const (),
 }
 
@@ -307,7 +331,7 @@ pub(crate) struct Function {
     pub line: u32,
     pub unknown1: u32,
     pub unknown2: u32,
-    pub signatrue: GamePtr<FunctionSignature>,
+    pub signature: GamePtr<FunctionSignature>,
     pub node: NodeRef,
     pub r#type: FunctionType,
     pub key: [u32; 4],
@@ -352,7 +376,7 @@ pub(crate) struct FunctionParamList {
 #[derive(Debug)]
 #[repr(C)]
 pub(crate) struct FunctionParamDesc {
-    pub r#type: ValueType,
+    pub r#type: u16,
     pub unknown: u32,
 }
 
@@ -425,11 +449,42 @@ impl<K: PartialOrd, V> TMap<K, V> {
             Some((&final_tree_node.kv.value).into())
         }
     }
+
+    pub fn iter(&self) -> TMapIter<'_, K, V> {
+        self.into_iter()
+    }
+}
+
+impl<'a, K: PartialOrd, V> IntoIterator for &'a TMap<K, V> {
+    type IntoIter = TMapIter<'a, K, V>;
+    type Item = &'a TMapNode<K, V>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        TMapIter { nodes: vec![&self.root] }
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct TMapIter<'a, K: PartialOrd, V> {
+    nodes: Vec<&'a TMapNode<K, V>>,
+}
+
+impl<'a, K: PartialOrd, V> Iterator for TMapIter<'a, K, V> {
+    type Item = &'a TMapNode<K, V>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let last = self.nodes.pop()?;
+        if !last.is_root {
+            self.nodes.push(last.right.as_ref());
+            self.nodes.push(last.left.as_ref());
+        }
+        Some(last)
+    }
 }
 
 #[derive(Debug)]
 #[repr(C)]
-struct TMapNode<K, V> {
+pub(crate) struct TMapNode<K, V> {
     left: GamePtr<TMapNode<K, V>>,
     root: GamePtr<TMapNode<K, V>>,
     right: GamePtr<TMapNode<K, V>>,
@@ -461,6 +516,12 @@ impl<'a, T> IntoIterator for &'a List<T> {
     }
 }
 
+impl<T> List<T> {
+    pub fn iter(&self) -> ListIter<'_, T> {
+        self.into_iter()
+    }
+}
+
 pub(crate) struct ListIter<'a, T> {
     len: usize,
     next: GamePtr<ListNode<T>>,
@@ -487,4 +548,105 @@ pub(crate) struct ListNode<T> {
     pub next: GamePtr<ListNode<T>>,
     pub head: GamePtr<ListNode<T>>,
     pub item: T,
+}
+
+#[derive(Debug)]
+#[repr(C)]
+pub(crate) struct OsiString {
+    pub str: OsiStr,
+}
+
+impl OsiString {
+    pub fn from_bytes(bytes: &[u8]) -> Self {
+        if bytes.len() < 16 {
+            let mut buf = [0u8; 16];
+            buf[..bytes.len()].clone_from_slice(bytes);
+            Self { str: OsiStr { ptr_or_buf: PtrOrBuf { buf }, size: bytes.len(), capacity: 15 } }
+        } else {
+            let ptr = unsafe {
+                let layout = alloc::Layout::from_size_align_unchecked(bytes.len() + 1, 1);
+                let ptr = alloc::alloc(layout);
+                if ptr.is_null() {
+                    alloc::handle_alloc_error(layout);
+                }
+                ptr.copy_from_nonoverlapping(bytes.as_ptr(), bytes.len());
+                ptr.add(bytes.len()).write(0);
+                ptr
+            };
+
+            Self {
+                str: OsiStr {
+                    ptr_or_buf: PtrOrBuf { ptr },
+                    size: bytes.len(),
+                    capacity: bytes.len(),
+                },
+            }
+        }
+    }
+}
+
+impl Drop for OsiString {
+    fn drop(&mut self) {
+        if self.str.is_large_mode() {
+            unsafe {
+                alloc::dealloc(
+                    self.str.ptr_or_buf.ptr,
+                    alloc::Layout::from_size_align_unchecked(self.str.capacity + 1, 1),
+                );
+            }
+        }
+    }
+}
+
+#[repr(C)]
+pub(crate) struct OsiStr {
+    ptr_or_buf: PtrOrBuf,
+    size: usize,
+    capacity: usize,
+}
+
+impl Debug for OsiStr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OsiString")
+            .field("ptr_or_buf", &self.as_cstr())
+            .field("size", &self.size)
+            .field("capacity", &self.capacity)
+            .finish()
+    }
+}
+
+impl Display for OsiStr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl PartialEq for OsiStr {
+    fn eq(&self, other: &Self) -> bool {
+        self.as_cstr().eq(other.as_cstr())
+    }
+}
+
+impl PartialOrd for OsiStr {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        self.as_cstr().partial_cmp(other.as_cstr())
+    }
+}
+
+impl OsiStr {
+    pub fn as_str(&self) -> &str {
+        self.as_cstr().to_str().expect("OsiStirng conatains invalid UTF-8 data")
+    }
+
+    pub fn as_cstr(&self) -> &CStr {
+        if self.is_large_mode() {
+            unsafe { CStr::from_ptr(self.ptr_or_buf.ptr as _) }
+        } else {
+            unsafe { CStr::from_ptr(self.ptr_or_buf.buf.as_ptr() as _) }
+        }
+    }
+
+    fn is_large_mode(&self) -> bool {
+        self.capacity > 15
+    }
 }

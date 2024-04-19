@@ -1,4 +1,7 @@
-use std::{io, net};
+use std::{
+    io, net,
+    sync::{Mutex, MutexGuard},
+};
 
 use crate::{binary_mappings::StaticSymbols, game_definitions::OsirisStaticGlobals};
 
@@ -7,6 +10,8 @@ macro_rules! info {
     ($($tt:tt)*) => {
         {
             $crate::_print!("\x1b[1m");
+            $crate::_log_print!("[INFO]: ");
+            $crate::_log_println!($($tt)*);
             $crate::_print!($($tt)*);
             $crate::_println!("\x1b[0m")
         }
@@ -18,6 +23,8 @@ macro_rules! warn {
     ($($tt:tt)*) => {
         {
             $crate::_print!("\x1b[33m");
+            $crate::_log_print!("[WARNING]: ");
+            $crate::_log_println!($($tt)*);
             $crate::_print!($($tt)*);
             $crate::_println!("\x1b[0m")
         }
@@ -29,6 +36,8 @@ macro_rules! err {
     ($($tt:tt)*) => {
         {
             $crate::_print!("\x1b[31m");
+            $crate::_log_print!("[ERROR]: ");
+            $crate::_log_println!($($tt)*);
             $crate::_print!($($tt)*);
             $crate::_println!("\x1b[0m")
         }
@@ -55,6 +64,21 @@ macro_rules! _println {
     };
 }
 
+#[macro_export]
+macro_rules! _log_print {
+    ($($tt:tt)*) => {
+        $crate::globals::Globals::log().push_str(&format!($($tt)*));
+    };
+}
+
+#[macro_export]
+macro_rules! _log_println {
+    ($($tt:tt)*) => {
+        $crate::_log_print!($($tt)*);
+        $crate::globals::Globals::log().push('\n');
+    };
+}
+
 static mut GLOBALS: Globals = Globals::new();
 
 #[derive(Debug, Default)]
@@ -62,11 +86,17 @@ pub(crate) struct Globals {
     static_symbols: StaticSymbols,
     osiris_globals: Option<OsirisStaticGlobals>,
     io: Option<Io>,
+    log: Mutex<String>,
 }
 
 impl Globals {
     pub const fn new() -> Self {
-        Self { static_symbols: StaticSymbols::new(), osiris_globals: None, io: None }
+        Self {
+            static_symbols: StaticSymbols::new(),
+            osiris_globals: None,
+            io: None,
+            log: Mutex::new(String::new()),
+        }
     }
 
     pub fn static_symbols() -> &'static StaticSymbols {
@@ -101,6 +131,10 @@ impl Globals {
 
     pub fn io_set(v: Option<Io>) {
         unsafe { GLOBALS.io = v }
+    }
+
+    pub fn log() -> MutexGuard<'static, String> {
+        unsafe { GLOBALS.log.lock().unwrap() }
     }
 }
 
@@ -139,14 +173,14 @@ impl io::Write for Io {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         match self {
             Io::StdIo(_, stdout) => stdout.write(buf),
-            Io::Tcp(_, s) => s.lock().unwrap().write(buf),
+            Io::Tcp(_, s) => s.get_mut().unwrap().write(buf),
         }
     }
 
     fn flush(&mut self) -> io::Result<()> {
         match self {
             Io::StdIo(_, stdout) => stdout.flush(),
-            Io::Tcp(_, s) => s.lock().unwrap().flush(),
+            Io::Tcp(_, s) => s.get_mut().unwrap().flush(),
         }
     }
 }

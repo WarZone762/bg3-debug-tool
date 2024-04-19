@@ -327,52 +327,52 @@ unsafe fn asm_resolve_instruction_ref(insn: *const u8) -> Option<*const u8> {
     Some(match (*insn, *(insn.add(1)), *(insn.add(2))) {
         // Call (4b operand) instruction
         (0xE8 | 0xE9, ..) => {
-            let rel = *(insn.add(1) as *const i32) as isize;
+            let rel = (insn.add(1) as *const i32).read_unaligned() as isize;
             insn.offset(rel + 5)
         }
         // MOV to 32-bit register (4b operand) instruction
         (0x8B, x, _) if x < 0x20 => {
-            let rel = *(insn.add(2) as *const i32) as isize;
+            let rel = (insn.add(2) as *const i32).read_unaligned() as isize;
             insn.offset(rel + 6)
         }
         // MOV/LEA (4b operand) instruction
         (0x44 | 0x48 | 0x4C, 0x8D | 0x8B | 0x89, _) => {
-            let rel = *(insn.add(3) as *const i32) as isize;
+            let rel = (insn.add(3) as *const i32).read_unaligned() as isize;
             insn.offset(rel + 7)
         }
         // MOVSXD (4b operand) instruction
         (0x48, 0x63, _) => {
-            let rel = *(insn.add(3) as *const i32) as isize;
+            let rel = (insn.add(3) as *const i32).read_unaligned() as isize;
             insn.offset(rel + 7)
         }
         // MOVZX (4b operand) instruction
         (0x44, 0x0F, 0xB7) => {
-            let rel = *(insn.add(4) as *const i32) as isize;
+            let rel = (insn.add(4) as *const i32).read_unaligned() as isize;
             insn.offset(rel + 8)
         }
         // MOVZX (4b operand) instruction
         (0x0F, 0xB7, _) => {
-            let rel = *(insn.add(3) as *const i32) as isize;
+            let rel = (insn.add(3) as *const i32).read_unaligned() as isize;
             insn.offset(rel + 7)
         }
         // CMP reg, [rip+xx] (4b operand) instruction
         (0x48, 0x3B, x) if x & 0x0F == 0x0D => {
-            let rel = *(insn.add(3) as *const i32) as isize;
+            let rel = (insn.add(3) as *const i32).read_unaligned() as isize;
             insn.offset(rel + 7)
         }
         // MOV cs:xxx, <imm4> instruction
         (0xC7, 0x05, _) => {
-            let rel = *(insn.add(2) as *const i32) as isize;
+            let rel = (insn.add(2) as *const i32).read_unaligned() as isize;
             insn.offset(rel + 10)
         }
         // OR ax, word ptr [cs:<imm4>] intruction
         (0x66, 0x0B, _) => {
-            let rel = *(insn.add(3) as *const i32) as isize;
+            let rel = (insn.add(3) as *const i32).read_unaligned() as isize;
             insn.offset(rel + 7)
         }
         // CMP, reg, [rip+xx] intruction
         (0x3B, ..) => {
-            let rel = *(insn.add(2) as *const i32) as isize;
+            let rel = (insn.add(2) as *const i32).read_unaligned() as isize;
             insn.offset(rel + 6)
         }
         _ => {
@@ -849,7 +849,7 @@ pub(crate) mod mappings {
 
 pub(crate) mod xml {
     #![allow(dead_code)]
-    use serde::{self, Deserialize};
+    use serde::Deserialize;
 
     #[derive(Clone, Deserialize, Debug)]
     pub(crate) struct BinaryMappings {

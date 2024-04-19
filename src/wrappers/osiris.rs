@@ -1,223 +1,379 @@
-use std::ffi::CString;
+use std::{
+    ffi::{CStr, CString},
+    fmt::Display,
+};
 
 use anyhow::bail;
 
 use crate::{
-    _println,
-    game_definitions::{OsiArgumentDesc, OsiArgumentValue, OsiStringOwned, ValueType},
+    game_definitions::{OsiArgumentDesc, OsiArgumentValue, OsiString, ValueType},
     globals::Globals,
     hooks::osiris,
-    warn,
 };
 
-fn osi_get_arg_types(name: &str) -> Option<()> {
-    for n_args in 0..7 {
-        let osi_name = OsiStringOwned::from_bytes(format!("{name}/{n_args}").as_bytes());
-        let hash = function_name_hash(name.as_bytes()) + n_args as u32;
-
-        if let Some(osi_fn) = (**Globals::osiris_globals().functions).find(hash, &osi_name.string) {
-            let mut arg_type = osi_fn.signatrue.params.params.head.next;
-
-            _println!("{:?}", &mut *arg_type);
-        }
-    }
-
-    Some(())
+#[macro_export]
+macro_rules! osi_fn {
+    ($ident:ident) => {
+        $crate::wrappers::osiris::FunctionCall {
+            ident: stringify!($ident).to_string(),
+            args: vec![],
+        }.call()
+    };
+    ($ident:ident, $($arg:expr),*) => {
+        $crate::wrappers::osiris::FunctionCall {
+            ident: stringify!($ident).to_string(),
+            args: vec![$($crate::wrappers::osiris::Value::from($arg)),*],
+        }.call()
+    };
 }
 
 #[derive(Debug)]
-pub(crate) struct OsiCall {
+pub(crate) struct FunctionCall {
     pub ident: String,
-    pub args: Vec<OsiArg>,
+    pub args: Vec<Value>,
 }
 
-impl syn::parse::Parse for OsiCall {
+impl syn::parse::Parse for FunctionCall {
     fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
         let name = input.parse::<syn::Ident>()?;
         let content;
         syn::parenthesized!(content in input);
-        let args = content.parse_terminated(OsiArg::parse, syn::Token![,])?.into_iter().collect();
+        let args = content.parse_terminated(Value::parse, syn::Token![,])?.into_iter().collect();
 
         Ok(Self { ident: name.to_string(), args })
     }
 }
 
-impl OsiCall {
-    pub fn call(&self) -> anyhow::Result<()> {
-        let n_args = self.args.len();
-
-        let osi_name = OsiStringOwned::from_bytes(format!("{}/{n_args}", self.ident).as_bytes());
-        let hash = function_name_hash(self.ident.as_bytes()) + n_args as u32;
-
-        let Some(osi_fn) = Globals::osiris_globals().functions.find(hash, &osi_name.string) else {
-            bail!("unable to find call '{}' with {n_args} arguments", self.ident);
-        };
-
-        let osi_handle = osi_fn.handle();
-        let osi_args = OsiArgumentDesc::from_values(self.args.iter().map(|x| x.to_ffi()));
-        if !osiris::Call(osi_handle, osi_args) {
-            bail!("call '{}' failed", self.ident)
-        }
-
-        Ok(())
-    }
-
-    pub fn query(&self) -> anyhow::Result<OsiArg> {
-        let n_args = self.args.len() + 1;
-
-        let osi_name = OsiStringOwned::from_bytes(format!("{}/{n_args}", self.ident).as_bytes());
-        let hash = function_name_hash(self.ident.as_bytes()) + n_args as u32;
-
-        let Some(osi_fn) = Globals::osiris_globals().functions.find(hash, &osi_name.string) else {
-            bail!("unable to find query '{}' with {n_args} arguments", self.ident);
-        };
-
-        // let ret = osi_fn
-        //     .signatrue
-        //     .params
-        //     .params
-        //     .into_iter()
-        //     .last()
-        //     .map(|arg| OsiArgumentValue::null(arg.r#type))
-        //     .unwrap_or_default();
-
-        let mut in_args_count = 0;
-        for (i, arg) in (&osi_fn.signatrue.params.params).into_iter().enumerate() {
-            if !osi_fn.signatrue.out_param_list.is_out_param(i) {
-                let provided_type = self.args[in_args_count].to_ffi().type_id;
-                if provided_type != arg.r#type {
-                    warn!(
-                        "in param {i} wrong type: expected {:?}, got {provided_type:?}",
-                        arg.r#type
-                    );
-                }
-                in_args_count += 1;
-            }
-        }
-
-        // let Some(ret) = osi_fn.signatrue.params.params.into_iter().last() else {
-        //     bail!("query '{}' has no return parameters", self.ident)
-        // };
-        //
-        // let ret = OsiArgumentValue::null(ret.r#type);
-
-        let mut arg_type = osi_fn.signatrue.params.params.head.next;
-        let mut ret = OsiArgumentValue::none();
-        for _ in 0..n_args {
-            ret.type_id = arg_type.item.r#type;
-            arg_type = arg_type.next;
-        }
-
-        let osi_handle = osi_fn.handle();
-        let osi_args = OsiArgumentDesc::from_values(
-            self.args.iter().map(|x| x.to_ffi()).chain(std::iter::once(ret)),
-        );
-        if !osiris::Query(osi_handle, osi_args) {
-            bail!("query '{}' failed", self.ident);
-        }
-
-        let mut out_arg = osi_args;
-        for _ in 1..n_args {
-            out_arg = out_arg.next_param
-        }
-
-        Ok(OsiArg::from_ffi(&out_arg.value))
+impl FunctionCall {
+    pub fn call(&self) -> anyhow::Result<Option<Value>> {
+        Function::new(&self.ident, self.args.len())?(self.args.iter().cloned())
     }
 }
 
 #[derive(Debug)]
-pub(crate) enum OsiArg {
-    None,
-    I32(i32),
-    I64(i64),
-    F32(f32),
-    String(std::ffi::CString),
-    GuidString(std::ffi::CString),
-    CharacterGuid(std::ffi::CString),
-    ItemGuid(std::ffi::CString),
-    Undefined,
+pub(crate) enum Function {
+    Call(Call),
+    Query(Query),
 }
 
-impl syn::parse::Parse for OsiArg {
+impl<T: IntoIterator<Item = impl Into<Value>>> FnOnce<(T,)> for Function {
+    type Output = anyhow::Result<Option<Value>>;
+
+    extern "rust-call" fn call_once(self, args: (T,)) -> Self::Output {
+        self.call_fn(args.0)
+    }
+}
+
+impl<T: IntoIterator<Item = impl Into<Value>>> FnMut<(T,)> for Function {
+    extern "rust-call" fn call_mut(&mut self, args: (T,)) -> Self::Output {
+        self.call_fn(args.0)
+    }
+}
+
+impl<T: IntoIterator<Item = impl Into<Value>>> Fn<(T,)> for Function {
+    extern "rust-call" fn call(&self, args: (T,)) -> Self::Output {
+        self.call_fn(args.0)
+    }
+}
+
+impl Function {
+    pub fn new(name: impl AsRef<str>, n_args: usize) -> anyhow::Result<Self> {
+        let name = name.as_ref();
+        if let Ok(f) = Call::new(name, n_args) {
+            return Ok(Self::Call(f));
+        }
+        Ok(Self::Query(Query::new(name, n_args)?))
+    }
+
+    pub fn call_fn(
+        &self,
+        args: impl IntoIterator<Item = impl Into<Value>>,
+    ) -> anyhow::Result<Option<Value>> {
+        match self {
+            Function::Call(x) => x.call(args).map(|_| None),
+            Function::Query(x) => x.call(args).map(Some),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct Call {
+    name: String,
+    handle: u32,
+    args: Vec<ValueType>,
+}
+
+impl Call {
+    pub fn new(name: impl AsRef<str>, n_args: usize) -> anyhow::Result<Self> {
+        let name = name.as_ref();
+        let osi_name = OsiString::from_bytes(format!("{name}/{n_args}").as_bytes());
+        let hash = function_name_hash(name.as_bytes()) + n_args as u32;
+
+        let Some(f) = Globals::osiris_globals().functions.find(hash, &osi_name.str) else {
+            bail!("unable to find call '{name}' with {n_args} arguments");
+        };
+
+        let mut args = Vec::with_capacity(n_args);
+        for (i, arg) in f.signature.params.params.iter().enumerate() {
+            if f.signature.out_param_list.is_out_param(i) {
+                bail!("{name}: the function has out parameters, so this should be a query");
+            }
+            args.push(arg.r#type.into());
+        }
+
+        Ok(Self { name: name.into(), handle: f.handle(), args })
+    }
+
+    pub fn call(&self, args: impl IntoIterator<Item = impl Into<Value>>) -> anyhow::Result<()> {
+        let args = args.into_iter().map(Into::into).collect::<Vec<Value>>();
+        if self.args.len() != args.len() {
+            bail!(
+                "call {}: incorrect number of arguments supplied: expected {}, got {}",
+                self.name,
+                self.args.len(),
+                args.len(),
+            );
+        }
+
+        let mut new_args = Vec::with_capacity(self.args.len());
+        for (i, (provided, expected)) in args.iter().zip(&self.args).enumerate() {
+            if let Some(arg) = provided.to_ffi(*expected) {
+                new_args.push(arg);
+            } else {
+                bail!(
+                    "call {}: incorrect function parameter type {i}: expected {expected:?}, got \
+                     {} ({})",
+                    self.name,
+                    provided.type_str(),
+                    provided,
+                );
+            }
+        }
+
+        OsiArgumentDesc::from_values(new_args, |args| {
+            if !osiris::Call(self.handle, args.into()) {
+                bail!("call {} failed with args '{}'", self.name, args);
+            }
+            Ok(())
+        })
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct Query {
+    name: String,
+    handle: u32,
+    args: Vec<Arg>,
+}
+
+impl Query {
+    pub fn new(name: impl AsRef<str>, n_args: usize) -> anyhow::Result<Self> {
+        let n_args = n_args + 1;
+        let name = name.as_ref();
+        let osi_name = OsiString::from_bytes(format!("{name}/{n_args}").as_bytes());
+        let hash = function_name_hash(name.as_bytes()) + n_args as u32;
+
+        let Some(f) = Globals::osiris_globals().functions.find(hash, &osi_name.str) else {
+            bail!("unable to find query '{name}' with {} arguments", n_args - 1);
+        };
+
+        let mut args = Vec::with_capacity(n_args);
+        for (i, arg) in f.signature.params.params.iter().enumerate() {
+            if f.signature.out_param_list.is_out_param(i) {
+                args.push(Arg::Out(arg.r#type.into()))
+            } else {
+                args.push(Arg::In(arg.r#type.into()));
+            }
+        }
+        if !args.iter().any(|x| matches!(x, Arg::Out(_))) {
+            bail!("{name}: the function has no out parameters, so this should be a call");
+        }
+
+        Ok(Self { name: name.into(), handle: f.handle(), args })
+    }
+
+    pub fn call(&self, args: impl IntoIterator<Item = impl Into<Value>>) -> anyhow::Result<Value> {
+        let mut args = args.into_iter().map(Into::into).collect::<Vec<Value>>();
+        if self.args.len() - 1 != args.len() {
+            bail!(
+                "query {}: incorrect number of arguments supplied: expected {}, got {}",
+                self.name,
+                self.args.len() - 1,
+                args.len(),
+            );
+        }
+
+        // let mut ret = OsiArgumentValue::none();
+        let ret_i = self.args.iter().position(|x| matches!(x, Arg::Out(_))).unwrap();
+        // ret.type_id = self.args[ret_i].r#type();
+        args.insert(ret_i, Value::None);
+
+        let mut new_args = Vec::with_capacity(self.args.len());
+        for (i, (provided, expected)) in args.iter().zip(&self.args).enumerate() {
+            if let Some(arg) = provided.to_ffi(expected.r#type()) {
+                new_args.push(arg);
+            } else {
+                bail!(
+                    "query {}: incorrect function parameter type {i}: expected {:?}, got {} ({})",
+                    self.name,
+                    expected.r#type(),
+                    provided.type_str(),
+                    provided,
+                );
+            }
+        }
+
+        OsiArgumentDesc::from_values(new_args, |args| {
+            if !osiris::Query(self.handle, args.into()) {
+                bail!("query {} failed with args {}", self.name, args);
+            }
+            Ok(Value::from_ffi(&args.iter().nth(ret_i).unwrap()))
+        })
+    }
+}
+
+#[derive(Debug)]
+pub(crate) enum Arg {
+    In(ValueType),
+    Out(ValueType),
+}
+
+impl Arg {
+    pub fn r#type(&self) -> ValueType {
+        match self {
+            Arg::In(x) => *x,
+            Arg::Out(x) => *x,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) enum Value {
+    None,
+    Int(i64),
+    Float(f32),
+    String(std::ffi::CString),
+}
+
+impl syn::parse::Parse for Value {
     fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
         Ok(if let Ok(lit) = input.parse::<syn::Lit>() {
             match lit {
-                syn::Lit::Int(int) => match int.suffix() {
-                    "" | "i32" => Self::I32(int.base10_parse()?),
-                    "i64" => Self::I64(int.base10_parse()?),
-                    "f32" => Self::F32(int.base10_parse()?),
-                    x => return Err(input.error(format!("unsupported integer suffix '{x}'"))),
-                },
-                syn::Lit::Float(float) => match float.suffix() {
-                    "" | "f32" => Self::F32(float.base10_parse()?),
-                    x => return Err(input.error(format!("unsupported real suffix '{x}'"))),
-                },
+                syn::Lit::Int(int) => Self::Int(int.base10_parse()?),
+                syn::Lit::Float(float) => Self::Float(float.base10_parse()?),
                 syn::Lit::Str(str) => Self::String(CString::new(str.value()).unwrap()),
-                _ => return Err(input.error("unexpected literal")),
+                x => return Err(input.error(format!("unexpected literal '{x:?}'"))),
             }
         } else {
             let ident = input.parse::<syn::Ident>()?;
 
             match ident.to_string().as_str() {
                 "None" => Self::None,
-                "Undefined" => Self::Undefined,
-                x => {
-                    let content;
-                    syn::parenthesized!(content in input);
-                    match x {
-                        "GuidString" => Self::GuidString(
-                            CString::new(content.parse::<syn::LitStr>()?.value()).unwrap(),
-                        ),
-                        "CharacterGuid" => Self::CharacterGuid(
-                            CString::new(content.parse::<syn::LitStr>()?.value()).unwrap(),
-                        ),
-                        "ItemGuid" => Self::ItemGuid(
-                            CString::new(content.parse::<syn::LitStr>()?.value()).unwrap(),
-                        ),
-                        x => return Err(input.error(format!("unknown Osiris argument type '{x}'"))),
-                    }
-                }
+                x => return Err(input.error(format!("unknown Osiris argument type '{x}'"))),
             }
         })
     }
 }
 
-impl OsiArg {
-    pub fn to_ffi(&self) -> OsiArgumentValue {
+impl From<i32> for Value {
+    fn from(value: i32) -> Self {
+        Self::Int(value as _)
+    }
+}
+
+impl From<i64> for Value {
+    fn from(value: i64) -> Self {
+        Self::Int(value)
+    }
+}
+
+impl From<f32> for Value {
+    fn from(value: f32) -> Self {
+        Self::Float(value)
+    }
+}
+
+impl From<&str> for Value {
+    fn from(value: &str) -> Self {
+        Self::String(CString::new(value).unwrap())
+    }
+}
+
+impl From<&CStr> for Value {
+    fn from(value: &CStr) -> Self {
+        Self::String(value.into())
+    }
+}
+
+impl Display for Value {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            OsiArg::None => OsiArgumentValue::none(),
-            OsiArg::I32(i) => OsiArgumentValue::int32(*i),
-            OsiArg::I64(i) => OsiArgumentValue::int64(*i),
-            OsiArg::F32(r) => OsiArgumentValue::real(*r),
-            OsiArg::String(s) => OsiArgumentValue::string(s.as_ptr()),
-            OsiArg::GuidString(s) => OsiArgumentValue::guid_string(s.as_ptr()),
-            OsiArg::CharacterGuid(s) => OsiArgumentValue::character_guid(s.as_ptr()),
-            OsiArg::ItemGuid(s) => OsiArgumentValue::item_guid(s.as_ptr()),
-            OsiArg::Undefined => OsiArgumentValue::undefined(),
+            Value::None => f.write_str("None"),
+            Value::Int(x) => Display::fmt(x, f),
+            Value::Float(x) => Display::fmt(x, f),
+            Value::String(x) => Display::fmt(x.to_str().unwrap(), f),
         }
+    }
+}
+
+impl Value {
+    pub fn to_ffi(&self, r#type: ValueType) -> Option<OsiArgumentValue> {
+        match r#type {
+            ValueType::None => return Some(OsiArgumentValue::none()),
+            ValueType::Undefined => return Some(OsiArgumentValue::undefined()),
+            _ => (),
+        }
+
+        Some(match self {
+            Value::None => OsiArgumentValue::null(r#type),
+            Value::Int(x) => match r#type {
+                ValueType::Integer => OsiArgumentValue::int32(*x as _),
+                ValueType::Integer64 => OsiArgumentValue::int64(*x),
+                ValueType::Real => OsiArgumentValue::real(*x as _),
+                _ => return None,
+            },
+            Value::Float(x) => match r#type {
+                ValueType::Integer => OsiArgumentValue::int32(*x as _),
+                ValueType::Integer64 => OsiArgumentValue::int64(*x as _),
+                ValueType::Real => OsiArgumentValue::real(*x),
+                _ => return None,
+            },
+            Value::String(x) => match r#type {
+                ValueType::String => OsiArgumentValue::string(x.as_ptr()),
+                ValueType::GuidString => OsiArgumentValue::guid_string(x.as_ptr()),
+                ValueType::CharacterGuid => OsiArgumentValue::character_guid(x.as_ptr()),
+                ValueType::ItemGuid => OsiArgumentValue::item_guid(x.as_ptr()),
+                ValueType::Unknown21 => OsiArgumentValue::unknown21(x.as_ptr()),
+                _ => return None,
+            },
+        })
     }
 
     pub fn from_ffi(value: &OsiArgumentValue) -> Self {
         unsafe {
             match value.type_id {
                 ValueType::None => Self::None,
-                ValueType::Integer => Self::I32(value.value.int32),
-                ValueType::Integer64 => Self::I64(value.value.int64),
-                ValueType::Real => Self::F32(value.value.float),
-                ValueType::String => {
+                ValueType::Integer => Self::Int(value.value.int32 as _),
+                ValueType::Integer64 => Self::Int(value.value.int64),
+                ValueType::Real => Self::Float(value.value.float),
+                ValueType::String
+                | ValueType::GuidString
+                | ValueType::CharacterGuid
+                | ValueType::ItemGuid
+                | ValueType::Unknown21 => {
                     Self::String(std::ffi::CStr::from_ptr(value.value.string).into())
                 }
-                ValueType::GuidString => {
-                    Self::GuidString(std::ffi::CStr::from_ptr(value.value.string).into())
-                }
-                ValueType::CharacterGuid => {
-                    Self::CharacterGuid(std::ffi::CStr::from_ptr(value.value.string).into())
-                }
-                ValueType::ItemGuid => {
-                    Self::ItemGuid(std::ffi::CStr::from_ptr(value.value.string).into())
-                }
-                ValueType::Undefined => Self::Undefined,
+                ValueType::Undefined => Self::None,
             }
+        }
+    }
+
+    pub fn type_str(&self) -> &str {
+        match self {
+            Value::None => "None",
+            Value::Int(_) => "Integer",
+            Value::Float(_) => "Real",
+            Value::String(_) => "String",
         }
     }
 }

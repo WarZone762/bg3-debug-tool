@@ -6,7 +6,6 @@ use super::{
     glm, Array, FixedString, GamePtr, Guid, Map, MultiHashMap, MultiHashSet, OverrideableProperty,
     STDString, Transform, TranslatedString,
 };
-use crate::info;
 
 #[derive(Debug)]
 #[repr(C)]
@@ -21,7 +20,6 @@ impl GlobalTemplateManager {
             let tls = **(x86_64::registers::segmentation::GS::read_base().as_ptr::<u8>().add(0x58)
                 as *const *const u64);
             let slot = *(tls as *const u8).add(8);
-            info!("{slot}");
             self.banks[slot as usize]
         }
     }

@@ -33,7 +33,7 @@ impl Display for GameVersionInfo {
 impl GameVersionInfo {
     #[inline]
     pub(crate) fn is_supported(&self) -> bool {
-        self.major == 4 && self.minor >= 37
+        self.major == 4 && self.minor >= 50
     }
 }
 

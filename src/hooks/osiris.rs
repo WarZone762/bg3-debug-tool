@@ -51,13 +51,13 @@ unsafe fn find_osiris_globals(ctor_proc: *const u8) -> Option<OsirisStaticGlobal
     for i in 0..0x500 {
         let ptr = addr.add(i);
 
-        if (*ptr == 0x49 || *ptr == 0x48)
-            && *ptr.add(1) == 0x8B
-            && *ptr.add(3) == 0x48
-            && *ptr.add(4) == 0x89
-            && (*ptr.add(5) & 0xC7) == 0x05
+        if (ptr.read_unaligned() == 0x49 || ptr.read_unaligned() == 0x48)
+            && ptr.add(1).read_unaligned() == 0x8B
+            && ptr.add(3).read_unaligned() == 0x48
+            && ptr.add(4).read_unaligned() == 0x89
+            && (ptr.add(5).read_unaligned() & 0xC7) == 0x05
         {
-            let rel_offset = *(ptr.add(6) as *const i32) as isize;
+            let rel_offset = (ptr.add(6) as *const i32).read_unaligned() as isize;
             let osi_ptr = ptr.offset(rel_offset + 10);
             globals[found_globals] = osi_ptr as _;
             found_globals += 1;

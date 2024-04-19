@@ -13,7 +13,6 @@ use windows::Win32::{
 use crate::{
     hook_definitions,
     hooks::{DetourTransactionBegin, DetourTransactionCommit, DetourUpdateThread},
-    info,
 };
 
 pub(crate) fn init(menu: impl ImGuiMenu<ash::Device> + 'static) -> anyhow::Result<()> {
@@ -30,16 +29,6 @@ vulkan("vulkan-1.dll") {
         p_allocator: *const vk::AllocationCallbacks,
         p_instance: *mut vk::Instance,
     ) -> vk::Result {
-        unsafe {
-            let name = (*(*p_create_info).p_application_info).p_application_name;
-            let engine_name = (*(*p_create_info).p_application_info).p_engine_name;
-
-            let name = std::ffi::CStr::from_ptr(name);
-            let engine_name = std::ffi::CStr::from_ptr(engine_name);
-
-            info!("{name:?} {engine_name:?}");
-        }
-
         let res = original::vkCreateInstance(p_create_info, p_allocator, p_instance);
 
         let instance = unsafe {

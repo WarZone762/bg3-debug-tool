@@ -1,4 +1,4 @@
-#![feature(let_chains)]
+#![feature(let_chains, unboxed_closures, fn_traits)]
 // #![allow(dead_code, unused_variables)]
 
 mod binary_mappings;
@@ -9,7 +9,7 @@ mod menu;
 mod script_extender;
 mod wrappers;
 
-use std::{io::BufRead, panic, thread};
+use std::panic;
 
 use hudhook::{hooks::dx11::ImguiDx11Hooks, Hudhook};
 use windows::{
@@ -25,7 +25,6 @@ use windows::{
 
 use crate::{
     binary_mappings::init_static_symbols, globals::Globals, script_extender::LibraryManager,
-    wrappers::osiris::OsiCall,
 };
 
 #[no_mangle]
@@ -81,78 +80,79 @@ fn main() {
         hooks::vulkan::init(menu).unwrap();
     }
 
-    thread::spawn(console_thread);
+    // thread::spawn(console_thread);
 }
 
-fn console_thread() {
-    let mut buf = String::new();
-
-    fn exec_cmd<'a>(buf: &'a mut String, name: &str) -> &'a str {
-        _print!("{name} >> ");
-        buf.clear();
-
-        Globals::io_mut().read_line(buf).unwrap();
-        buf.trim()
-    }
-
-    loop {
-        match exec_cmd(&mut buf, "") {
-            "search" | "s" => {
-                let input = exec_cmd(&mut buf, "search");
-
-                let template_manager =
-                    *Globals::static_symbols().ls__GlobalTemplateManager.unwrap();
-                let template_bank = template_manager.global_template_bank();
-
-                let mut count = 0;
-                for t in template_bank.templates.iter() {
-                    if !t.is_null() {
-                        let k = t.key;
-                        let v = t.value;
-
-                        let name = v.name.as_str();
-                        if name.contains(input) {
-                            info!("{name:?}: {k:?}, {}", v.id.as_str());
-                            info!("{}", v.get_type().as_str());
-                            count += 1;
-                        }
-                    }
-                }
-                info!("{count} entries found");
-            }
-            "call" | "c" => {
-                let input = exec_cmd(&mut buf, "call");
-
-                let call = match syn::parse_str::<OsiCall>(input) {
-                    Ok(x) => x,
-                    Err(x) => {
-                        warn!("{x}");
-                        continue;
-                    }
-                };
-
-                match call.call() {
-                    Ok(x) => info!("{x:?}"),
-                    Err(x) => warn!("{x}"),
-                }
-            }
-            "query" | "q" => {
-                let input = exec_cmd(&mut buf, "query");
-
-                let query = match syn::parse_str::<OsiCall>(input) {
-                    Ok(x) => x,
-                    Err(x) => {
-                        warn!("{x}");
-                        continue;
-                    }
-                };
-
-                match query.query() {
-                    Ok(x) => info!("{x:?}"),
-                    Err(x) => warn!("{x}"),
-                }
-            }
-            c => warn!("unknown command '{c}'"),
-        }
-    }
-}
+// fn console_thread() {
+//     let mut buf = String::new();
+//
+//     fn exec_cmd<'a>(buf: &'a mut String, name: &str) -> &'a str {
+//         _print!("{name} >> ");
+//         buf.clear();
+//
+//         Globals::io_mut().read_line(buf).unwrap();
+//         buf.trim()
+//     }
+//
+//     loop {
+//         match exec_cmd(&mut buf, "") {
+//             "search" | "s" => {
+//                 let input = exec_cmd(&mut buf, "search");
+//
+//                 let template_manager =
+//
+// *Globals::static_symbols().ls__GlobalTemplateManager.unwrap();
+// let template_bank = template_manager.global_template_bank();
+//
+//                 let mut count = 0;
+//                 for t in template_bank.templates.iter() {
+//                     if !t.is_null() {
+//                         let k = t.key;
+//                         let v = t.value;
+//
+//                         let name = v.name.as_str();
+//                         if name.contains(input) {
+//                             info!("{name:?}: {k:?}, {}", v.id.as_str());
+//                             info!("{}", v.get_type().as_str());
+//                             count += 1;
+//                         }
+//                     }
+//                 }
+//                 info!("{count} entries found");
+//             }
+//             "call" | "c" => {
+//                 let input = exec_cmd(&mut buf, "call");
+//
+//                 let call = match syn::parse_str::<FunctionCall>(input) {
+//                     Ok(x) => x,
+//                     Err(x) => {
+//                         warn!("{x}");
+//                         continue;
+//                     }
+//                 };
+//
+//                 match call.call() {
+//                     Ok(x) => info!("{x:?}"),
+//                     Err(x) => warn!("{x}"),
+//                 }
+//             }
+//             "query" | "q" => {
+//                 let input = exec_cmd(&mut buf, "query");
+//
+//                 let query = match syn::parse_str::<FunctionCall>(input) {
+//                     Ok(x) => x,
+//                     Err(x) => {
+//                         warn!("{x}");
+//                         continue;
+//                     }
+//                 };
+//
+//                 match query.query() {
+//                     Ok(x) => info!("{x:?}"),
+//                     Err(x) => warn!("{x}"),
+//                 }
+//             }
+//             c => warn!("unknown command '{c}'"),
+//         }
+//     }
+// }
