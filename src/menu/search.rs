@@ -453,7 +453,7 @@ fn object_data_row(ui: &Ui, name: &str, text: &str) {
 
 fn copy_popup(ui: &Ui, copy_text: &str) {
     if ui.is_item_hovered() {
-        if ui.is_mouse_released(MouseButton::Right) {
+        if ui.is_mouse_clicked(MouseButton::Right) {
             ui.set_clipboard_text(copy_text);
         }
         if ui.clipboard_text().is_some_and(|x| x == copy_text) {
