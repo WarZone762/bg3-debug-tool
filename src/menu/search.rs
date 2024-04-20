@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 
-use imgui::{TableFlags, Ui};
+use imgui::{MouseButton, TableFlags, Ui};
 
 use crate::{
     err,
@@ -10,6 +10,16 @@ use crate::{
     wrappers::osiris,
 };
 
+macro_rules! choose_category {
+    ($ident:ident, $($tt:tt)*) => {
+        match $ident.cur_category {
+            0 => $ident.items.$($tt)*,
+            1 => $ident.other.$($tt)*,
+            _ => $ident.items.$($tt)*,
+        }
+    };
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct Search {
     cur_category: usize,
@@ -17,16 +27,6 @@ pub(crate) struct Search {
     options: Options,
     items: ItemsCategory,
     other: OtherCategory,
-}
-
-macro_rules! cur_category {
-    ($this:expr, $f:ident($($arg:expr),*)) => {
-        match $this.cur_category {
-            0 => $this.items.$f($($arg,)*),
-            1 => $this.other.$f($($arg,)*),
-            _ => $this.items.$f($($arg,)*),
-        }
-    };
 }
 
 impl Search {
@@ -41,13 +41,24 @@ impl Search {
     }
 
     pub fn render(&mut self, ui: &Ui) {
+        macro_rules! cur_category {
+            ($($tt:tt)*) => {
+                choose_category!(self, $($tt)*)
+            };
+        }
+
         if let Some(node) = ui.tree_node("Search Options") {
-            ui.checkbox("Case Sensitive", &mut self.options.case_sensitive);
+            if ui.checkbox("Case Sensitive", &mut self.options.case_sensitive) {
+                self.search();
+            };
             if let Some(node) = ui.tree_node("Search Fields") {
-                ui.checkbox("Search Name", &mut self.options.search_name);
-                ui.checkbox("Search GUID", &mut self.options.search_id);
-                ui.checkbox("Search Display Name", &mut self.options.search_display_name);
-                cur_category!(self, render_options(ui));
+                if ui.checkbox("Search Name", &mut self.options.search_name)
+                    || ui.checkbox("Search GUID", &mut self.options.search_id)
+                    || ui.checkbox("Search Display Name", &mut self.options.search_display_name)
+                    || cur_category!(draw_options(ui))
+                {
+                    self.search();
+                }
                 node.pop();
             }
             node.pop();
@@ -56,26 +67,27 @@ impl Search {
         ui.separator();
         ui.text("Search");
         if ui.input_text("<<", &mut self.text).enter_returns_true(true).build() {
-            cur_category!(self, search(&self.text, &self.options));
+            self.search();
         }
 
-        let size = ui.window_size();
-        if let Some(tbl) = ui.begin_table_with_sizing(
-            "items-tbl",
-            cur_category!(self, columns()),
-            TableFlags::SCROLL_Y,
-            [size[0] * 0.5, -1.0],
-            0.0,
-        ) {
-            ui.table_next_row();
-            cur_category!(self, table(ui));
-            tbl.end();
-        }
+        cur_category!(draw_table(ui));
 
         ui.same_line();
         ui.child_window("Object Data").build(|| {
-            cur_category!(self, object_data(ui));
+            if let Some(selected_item) = cur_category!(selected) {
+                cur_category!(items[selected_item].render(ui));
+            }
         });
+    }
+
+    fn search(&mut self) {
+        macro_rules! cur_category {
+            ($($tt:tt)*) => {
+                choose_category!(self, $($tt)*)
+            };
+        }
+
+        cur_category!(search(&self.text, &self.options));
     }
 }
 
@@ -110,67 +122,52 @@ impl ItemsCategory {
         Self { items: Vec::new(), options: ItemsOptions::new(), selected: None }
     }
 
-    fn columns(&self) -> usize {
-        2
+    pub fn search(&mut self, text: &str, opts: &Options) {
+        Self::search_impl(&mut self.items, text, opts, &self.options, &mut self.selected)
     }
 
-    fn table(&mut self, ui: &Ui) {
-        for (i, item) in self.items.iter_mut().enumerate() {
-            ui.table_set_column_index(0);
+    pub fn draw_table(&mut self, ui: &Ui) {
+        Self::draw_table_impl(ui, &self.items, &mut self.selected);
+    }
+}
 
-            if ui
-                .selectable_config(&format!("##selectable{i}"))
-                .span_all_columns(true)
-                .selected(self.selected.is_some_and(|x| x == i))
-                .build()
-            {
-                self.selected = Some(i);
-            }
-            ui.same_line();
-            if let Some(display_name) = item.display_name.as_mut() {
-                ui.text_wrapped(display_name);
-            }
-            ui.table_next_column();
+impl Category for ItemsCategory {
+    type Item = Item;
+    type Options = ItemsOptions;
 
-            ui.text_wrapped(&item.name);
-            ui.table_next_column();
+    const COLS: usize = 2;
+
+    fn draw_table_row(ui: &Ui, item: &Self::Item) {
+        if let Some(display_name) = item.display_name.as_ref() {
+            ui.text_wrapped(display_name);
+        }
+        ui.table_next_column();
+
+        ui.text_wrapped(&item.name);
+        ui.table_next_column();
+    }
+
+    fn draw_options(&mut self, ui: &Ui) -> bool {
+        ui.checkbox("Search Description", &mut self.options.search_desc)
+    }
+
+    fn search_filter_map(item: SearchItem) -> Option<Self::Item> {
+        match item {
+            SearchItem::Item(x) => Some(x),
+            _ => None,
         }
     }
 
-    fn object_data(&mut self, ui: &Ui) {
-        if let Some(selected_item) = self.selected {
-            self.items[selected_item].render(ui);
-        }
-    }
-
-    fn render_options(&mut self, ui: &Ui) {
-        ui.checkbox("Search Description", &mut self.options.search_desc);
-    }
-
-    fn search(&mut self, text: &str, opts: &Options) {
-        self.items.clear();
-        let lowercase = text.to_lowercase();
-        let text = if opts.case_sensitive { text } else { &lowercase };
-        let pred = if opts.case_sensitive {
-            |string: &str, text: &str| string.contains(text)
-        } else {
-            |string: &str, text: &str| string.to_lowercase().contains(text)
-        };
-        self.items.extend(
-            templates()
-                .filter_map(|x| match x {
-                    SearchItem::Item(x) => Some(x),
-                    _ => None,
-                })
-                .filter(|x| {
-                    opts.search_name && pred(&x.name, text)
-                        || opts.search_id && pred(&x.id, text)
-                        || opts.search_display_name
-                            && x.display_name.as_ref().is_some_and(|x| pred(x, text))
-                        || self.options.search_desc
-                            && x.desc.as_ref().is_some_and(|x| pred(x, text))
-                }),
-        );
+    fn search_filter(
+        item: &Self::Item,
+        opts: &Options,
+        self_opts: &Self::Options,
+        pred: impl Fn(&str) -> bool,
+    ) -> bool {
+        opts.search_name && pred(&item.name)
+            || opts.search_id && pred(&item.id)
+            || opts.search_display_name && item.display_name.as_deref().is_some_and(&pred)
+            || self_opts.search_desc && item.desc.as_deref().is_some_and(&pred)
     }
 }
 
@@ -196,63 +193,123 @@ impl OtherCategory {
         Self { items: Vec::new(), selected: None }
     }
 
-    fn columns(&self) -> usize {
-        2
+    pub fn search(&mut self, text: &str, opts: &Options) {
+        Self::search_impl(&mut self.items, text, opts, &(), &mut self.selected);
     }
 
-    fn table(&mut self, ui: &Ui) {
-        for (i, item) in self.items.iter_mut().enumerate() {
-            ui.table_set_column_index(0);
+    pub fn draw_table(&mut self, ui: &Ui) {
+        Self::draw_table_impl(ui, &self.items, &mut self.selected);
+    }
+}
 
-            if ui
-                .selectable_config(&format!("##selectable{i}"))
-                .span_all_columns(true)
-                .selected(self.selected.is_some_and(|x| x == i))
-                .build()
-            {
-                self.selected = Some(i);
-            }
-            ui.same_line();
-            if let Some(display_name) = item.display_name.as_mut() {
-                ui.text_wrapped(display_name);
-            }
+impl Category for OtherCategory {
+    type Item = Other;
+    type Options = ();
 
-            ui.table_next_column();
-            ui.text_wrapped(&item.name);
-            ui.table_next_column();
+    const COLS: usize = 2;
+
+    fn draw_table_row(ui: &Ui, item: &Self::Item) {
+        if let Some(display_name) = item.display_name.as_ref() {
+            ui.text_wrapped(display_name);
+        }
+        ui.table_next_column();
+
+        ui.text_wrapped(&item.name);
+        ui.table_next_column();
+    }
+
+    fn draw_options(&mut self, _ui: &Ui) -> bool {
+        false
+    }
+
+    fn search_filter_map(item: SearchItem) -> Option<Self::Item> {
+        match item {
+            SearchItem::Other(x) => Some(x),
+            _ => None,
         }
     }
 
-    fn object_data(&mut self, ui: &Ui) {
-        if let Some(selected_item) = self.selected {
-            self.items[selected_item].render(ui);
-        }
+    fn search_filter(
+        item: &Self::Item,
+        opts: &Options,
+        _self_opts: &Self::Options,
+        pred: impl Fn(&str) -> bool,
+    ) -> bool {
+        opts.search_name && pred(&item.name)
+            || opts.search_id && pred(&item.id)
+            || opts.search_display_name && item.display_name.as_deref().is_some_and(pred)
     }
+}
 
-    fn render_options(&mut self, _ui: &Ui) {}
+trait Category {
+    const COLS: usize;
+    type Item;
+    type Options;
 
-    fn search(&mut self, text: &str, opts: &Options) {
-        self.items.clear();
-        let lowercase = text.to_lowercase();
-        let text = if opts.case_sensitive { text } else { &lowercase };
-        let pred = if opts.case_sensitive {
-            |string: &str, text: &str| string.contains(text)
+    fn draw_table_row(ui: &Ui, item: &Self::Item);
+    fn draw_options(&mut self, ui: &Ui) -> bool;
+    fn search_filter_map(item: SearchItem) -> Option<Self::Item>;
+    fn search_filter(
+        item: &Self::Item,
+        opts: &Options,
+        self_opts: &Self::Options,
+        pred: impl Fn(&str) -> bool,
+    ) -> bool;
+
+    fn search_impl(
+        items: &mut Vec<Self::Item>,
+        text: &str,
+        opts: &Options,
+        self_opts: &Self::Options,
+        selected: &mut Option<usize>,
+    ) {
+        selected.take();
+        items.clear();
+        if opts.case_sensitive {
+            let pred = &|string: &str| string.contains(text);
+            items.extend(
+                templates()
+                    .filter_map(Self::search_filter_map)
+                    .filter(|x| Self::search_filter(x, opts, self_opts, pred)),
+            )
         } else {
-            |string: &str, text: &str| string.to_lowercase().contains(text)
-        };
-        self.items.extend(
-            templates()
-                .filter_map(|x| match x {
-                    SearchItem::Other(x) => Some(x),
-                    _ => None,
-                })
-                .filter(|x| {
-                    opts.search_name && pred(&x.name, text)
-                        || opts.search_id && pred(&x.id, text)
-                        || opts.search_display_name
-                            && x.display_name.as_ref().is_some_and(|x| pred(x, text))
-                }),
-        );
+            let text = text.to_lowercase();
+            let pred = &|string: &str| string.to_lowercase().contains(&text);
+            items.extend(
+                templates()
+                    .filter_map(Self::search_filter_map)
+                    .filter(|x| Self::search_filter(x, opts, self_opts, pred)),
+            );
+        }
+    }
+
+    fn draw_table_impl(ui: &Ui, items: &[Self::Item], selected: &mut Option<usize>) {
+        let size = ui.window_size();
+        if let Some(tbl) = ui.begin_table_with_sizing(
+            "items-tbl",
+            Self::COLS,
+            TableFlags::SCROLL_Y,
+            [size[0] * 0.5, -1.0],
+            0.0,
+        ) {
+            ui.table_next_row();
+            for (i, item) in items.iter().enumerate() {
+                ui.table_set_column_index(0);
+
+                if ui
+                    .selectable_config(&format!("##selectable{i}"))
+                    .span_all_columns(true)
+                    .selected(selected.is_some_and(|x| x == i))
+                    .build()
+                {
+                    selected.replace(i);
+                }
+                ui.same_line();
+
+                Self::draw_table_row(ui, item);
+            }
+            tbl.end();
+        }
     }
 }
 
@@ -314,32 +371,17 @@ impl From<&ItemTemplate> for Item {
 
 impl Item {
     pub fn render(&mut self, ui: &Ui) {
-        if let Some(tbl) = ui.begin_table("obj_data_tbl", 2) {
+        if let Some(tbl) = ui.begin_table("obj-data-tbl", 2) {
             ui.table_next_row();
             ui.table_set_column_index(0);
 
-            ui.text("GUID");
-            ui.table_next_column();
-            ui.text_wrapped(&self.id);
-            ui.table_next_column();
-
-            ui.text("Name");
-            ui.table_next_column();
-            ui.text_wrapped(&self.name);
-            ui.table_next_column();
-
+            object_data_row(ui, "GUID", &self.id);
+            object_data_row(ui, "Name", &self.name);
             if let Some(display_name) = &self.display_name {
-                ui.text("Display Name");
-                ui.table_next_column();
-                ui.text_wrapped(display_name);
-                ui.table_next_column();
+                object_data_row(ui, "Display Name", display_name);
             }
-
             if let Some(desc) = &self.desc {
-                ui.text("Description");
-                ui.table_next_column();
-                ui.text_wrapped(desc);
-                ui.table_next_column();
+                object_data_row(ui, "Description", desc);
             }
 
             tbl.end();
@@ -386,28 +428,38 @@ impl From<&GameObjectTemplate> for Other {
 
 impl Other {
     pub fn render(&mut self, ui: &Ui) {
-        if let Some(tbl) = ui.begin_table("obj_data_tbl", 2) {
+        if let Some(tbl) = ui.begin_table("obj-data-tbl", 2) {
             ui.table_next_row();
             ui.table_set_column_index(0);
 
-            ui.text("GUID");
-            ui.table_next_column();
-            ui.text_wrapped(&self.id);
-            ui.table_next_column();
-
-            ui.text("Name");
-            ui.table_next_column();
-            ui.text_wrapped(&self.name);
-            ui.table_next_column();
-
+            object_data_row(ui, "GUID", &self.id);
+            object_data_row(ui, "Name", &self.name);
             if let Some(display_name) = &self.display_name {
-                ui.text("Display Name");
-                ui.table_next_column();
-                ui.text_wrapped(display_name);
-                ui.table_next_column();
+                object_data_row(ui, "Display Name", display_name);
             }
 
             tbl.end();
+        }
+    }
+}
+
+fn object_data_row(ui: &Ui, name: &str, text: &str) {
+    ui.text(name);
+    ui.table_next_column();
+    ui.text_wrapped(text);
+    copy_popup(ui, text);
+    ui.table_next_column();
+}
+
+fn copy_popup(ui: &Ui, copy_text: &str) {
+    if ui.is_item_hovered() {
+        if ui.is_mouse_released(MouseButton::Right) {
+            ui.set_clipboard_text(copy_text);
+        }
+        if ui.clipboard_text().is_some_and(|x| x == copy_text) {
+            ui.tooltip(|| ui.text("Copied!"));
+        } else {
+            ui.tooltip(|| ui.text("Right click to copy"));
         }
     }
 }

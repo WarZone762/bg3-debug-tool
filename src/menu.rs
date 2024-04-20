@@ -7,13 +7,13 @@ mod console;
 mod search;
 
 // TODO:
-// - add console history, clearing console on enter
-// - add ability to copy item fields
-// - add ability to add/remove fields in object data
-// - fix selectable in table not covering all row
-// - add resizing table, ability add/remove columns
-// - add Osiris function search
-// - finish other tabs
+// - [ ] add console history, clearing console on enter
+// - [x] add ability to copy item fields
+// - [ ] add ability to add/remove fields in object data
+// - [ ] fix selectable in table not covering all row
+// - [ ] add resizing table, ability add/remove columns
+// - [ ] add Osiris function search
+// - [ ] finish other tabs
 
 pub(crate) struct Menu {
     search: search::Search,
