@@ -137,14 +137,15 @@ impl Category for ItemsCategory {
 
     const COLS: usize = 2;
 
-    fn draw_table_row(ui: &Ui, item: &Self::Item) {
+    fn draw_table_row(ui: &Ui, item: &Self::Item, mut height_cb: impl FnMut()) {
         if let Some(display_name) = item.display_name.as_ref() {
             ui.text_wrapped(display_name);
+            height_cb();
         }
         ui.table_next_column();
 
         ui.text_wrapped(&item.name);
-        ui.table_next_column();
+        height_cb();
     }
 
     fn draw_options(&mut self, ui: &Ui) -> bool {
@@ -208,14 +209,15 @@ impl Category for OtherCategory {
 
     const COLS: usize = 2;
 
-    fn draw_table_row(ui: &Ui, item: &Self::Item) {
+    fn draw_table_row(ui: &Ui, item: &Self::Item, mut height_cb: impl FnMut()) {
         if let Some(display_name) = item.display_name.as_ref() {
             ui.text_wrapped(display_name);
+            height_cb();
         }
         ui.table_next_column();
 
         ui.text_wrapped(&item.name);
-        ui.table_next_column();
+        height_cb();
     }
 
     fn draw_options(&mut self, _ui: &Ui) -> bool {
@@ -246,7 +248,7 @@ trait Category {
     type Item;
     type Options;
 
-    fn draw_table_row(ui: &Ui, item: &Self::Item);
+    fn draw_table_row(ui: &Ui, item: &Self::Item, height_cb: impl FnMut());
     fn draw_options(&mut self, ui: &Ui) -> bool;
     fn search_filter_map(item: SearchItem) -> Option<Self::Item>;
     fn search_filter(
@@ -296,17 +298,22 @@ trait Category {
             for (i, item) in items.iter().enumerate() {
                 ui.table_set_column_index(0);
 
+                let mut max_height = 0.0;
+                let height_cb = || {
+                    max_height = ui.item_rect_size()[1].max(max_height);
+                };
+                Self::draw_table_row(ui, item, height_cb);
+                ui.same_line();
                 if ui
                     .selectable_config(&format!("##selectable{i}"))
                     .span_all_columns(true)
                     .selected(selected.is_some_and(|x| x == i))
+                    .size([0.0, max_height])
                     .build()
                 {
                     selected.replace(i);
                 }
-                ui.same_line();
-
-                Self::draw_table_row(ui, item);
+                ui.table_next_column();
             }
             tbl.end();
         }

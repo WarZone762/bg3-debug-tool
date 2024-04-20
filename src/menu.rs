@@ -9,10 +9,13 @@ mod search;
 // TODO:
 // - [x] add ability to copy item fields
 // - [x] add console history, clearing console on enter
+// - [x] fix selectable in table not covering the entire row's height
 // - [ ] add ability to add/remove fields in object data
-// - [ ] fix selectable in table not covering the entire row's height
 // - [ ] add resizing table, ability add/remove columns
+// - [ ] add regex search
 // - [ ] add Osiris function search
+// - [ ] add hotkey to toggle the menu
+// - [ ] add DX11 hooks
 // - [ ] finish other tabs
 
 pub(crate) struct Menu {
