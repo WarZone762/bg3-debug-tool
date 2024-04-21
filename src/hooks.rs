@@ -22,7 +22,7 @@ macro_rules! hook_definitions {
             )*
         }
     } => {
-        pub(crate) fn hook() -> anyhow::Result<()> {
+        fn hook() -> anyhow::Result<()> {
             unsafe {
                 let $mod_name = windows::Win32::System::LibraryLoader::LoadLibraryW(
                     windows::core::w!($dll_name)
@@ -120,25 +120,6 @@ macro_rules! fn_definitions {
             )*
         }
     } => {
-        // pub(crate) fn init_functions() -> anyhow::Result<()> {
-        //     unsafe {
-        //         let $mod_name = windows::Win32::System::LibraryLoader::LoadLibraryW(
-        //             windows::core::w!($dll_name)
-        //         )?;
-        //
-        //         $(
-        //             $crate::if_no_init_meta!(
-        //                 $crate::init_hook_from_name!(
-        //                     $mod_name,
-        //                     $name $(, $symbol_name)?
-        //                 ) $(, $init)?
-        //             );
-        //         )*
-        //     }
-        //
-        //     Ok(())
-        // }
-
         #[allow(non_snake_case)]
         #[derive(Debug)]
         pub(crate) struct Functions {

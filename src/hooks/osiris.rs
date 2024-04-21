@@ -12,6 +12,10 @@ use crate::{
     hook_definitions,
 };
 
+pub(crate) fn init() -> anyhow::Result<()> {
+    hook()
+}
+
 hook_definitions! {
 osiris("Osiris.dll") {
     #[symbol_name = "?RegisterDIVFunctions@COsiris@@QEAAXPEAUTOsirisInitFunction@@@Z"]

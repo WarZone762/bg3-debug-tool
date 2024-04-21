@@ -26,8 +26,9 @@ debug = []
 [dependencies]
 anyhow = "1.0"
 ash = { version = "0.37", features = ["linked"] }
-bitflags = "2.5.0"
+bitflags = "2.5"
 build-time = "0.1"
+clap = { version = "4.5", features = ["derive"] }
 hudhook = "0.6"
 imgui = { version = "0.11", features = ["docking", "tables-api"] }
 itertools = "0.12"
@@ -45,14 +46,17 @@ windows = { version = "0.54", features = [
     "Win32_Graphics_Direct3D11",
     "Win32_Graphics_Dxgi_Common",
     "Win32_Graphics_Gdi",
+    "Win32_Security",
     "Win32_Storage",
     "Win32_Storage_FileSystem",
     "Win32_System",
     "Win32_System_Console",
     "Win32_System_Diagnostics",
     "Win32_System_Diagnostics_Debug",
+    "Win32_System_IO",
     "Win32_System_LibraryLoader",
     "Win32_System_Memory",
+    "Win32_System_Pipes",
     "Win32_System_ProcessStatus",
     "Win32_System_SystemInformation",
     "Win32_System_Threading",

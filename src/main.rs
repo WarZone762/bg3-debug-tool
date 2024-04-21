@@ -2,28 +2,45 @@
 
 use std::{mem, ptr};
 
-use ash::vk::SECURITY_ATTRIBUTES;
+use clap::Parser;
 use windows::{
     core::{s, PCSTR, PSTR},
     Win32::{
         Foundation::BOOL,
+        Security::SECURITY_ATTRIBUTES,
         System::Threading::{PROCESS_CREATION_FLAGS, PROCESS_INFORMATION, STARTUPINFOA},
     },
 };
 
+#[derive(Debug, Parser)]
+struct Args {
+    /// Launch the DirectX 11 version of the game
+    #[arg(long)]
+    dx11: bool,
+    /// TCP port to use for IO
+    #[arg(long)]
+    port: Option<u16>,
+}
+
 fn main() {
+    let args = Args::parse();
+    let exe = if args.dx11 { s!("bg3_dx11.exe") } else { s!("bg3.exe") };
+    if let Some(port) = args.port {
+        std::env::set_var("BG3_DEBUG_TOOL_PORT", port.to_string());
+    }
+
     let startup_info =
         STARTUPINFOA { cb: mem::size_of::<STARTUPINFOA>() as _, ..Default::default() };
     let mut proc_info = PROCESS_INFORMATION::default();
+
     unsafe {
         DetourCreateProcessWithDllExA(
-            // s!("bg3_dx11.exe"),
-            s!("bg3.exe"),
+            exe,
             PSTR::null(),
             ptr::null(),
             ptr::null(),
             true.into(),
-            PROCESS_CREATION_FLAGS::default(),
+            PROCESS_CREATION_FLAGS(0),
             ptr::null(),
             PCSTR::null(),
             &startup_info,

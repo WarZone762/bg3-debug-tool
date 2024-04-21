@@ -10,26 +10,27 @@ mod search;
 // - [x] add Osiris function search
 // - [x] add Osiris function search type options
 // - [x] add ability to copy item fields
+// - [x] add ability to launch either Vulkan or DX11
 // - [x] add console history, clearing console on enter
 // - [x] add hotkey to toggle the menu
-// - [x] add search total
-// - [x] fix selectable in table not covering the entire row's height
 // - [x] add resizing/adding/removing columns
+// - [x] add search total
 // - [x] add table header
-// - [ ] add ability to add/remove fields in object data
-// - [ ] add regex search
-// - [ ] figure out Osiris value type names
-// - [ ] add ability to export
-// - [ ] add ability to remove items, spells etc. from the character
-// - [ ] add DX11 hooks
-// - [ ] add ability to launch either Vulkan or DX11
-// - [ ] skip loading the Script Extender(DWrite.dll)
+// - [x] fix selectable in table not covering the entire row's height
 // - [ ] finish other categories
 //   - [x] Osiris functions
 //   - [-] spells
 //   - [ ] passives
 //   - [ ] conditions
+// - [ ] skip loading the Script Extender(DWrite.dll)
+// - [ ] add DX11 hooks
+// - [ ] add more fields to objects
 // - [ ] finish info tab
+// - [ ] add ability to remove items, spells etc. from the character
+// - [ ] add regex search
+// - [ ] figure out Osiris value type names
+// - [ ] add ability to add/remove fields in object data
+// - [ ] add ability to export game data
 
 pub(crate) struct Menu {
     opened: bool,
