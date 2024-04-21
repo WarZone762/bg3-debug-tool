@@ -382,14 +382,14 @@ impl FunctionDb {
 
 #[derive(Debug)]
 #[repr(C)]
-struct HashSlot {
+pub(crate) struct HashSlot {
     node_map: TMap<OsiStr, GamePtr<Function>>,
     unknown: *const (),
 }
 
 #[derive(Debug)]
 #[repr(C)]
-struct FunctionIdHash {
+pub(crate) struct FunctionIdHash {
     node_map: TMap<u32, *const ()>,
     unknown: *const (),
 }
@@ -480,7 +480,7 @@ pub(crate) struct NodeRef {
     pub id: u32,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 #[repr(u32)]
 pub(crate) enum FunctionType {
     Unknown = 0,
@@ -492,6 +492,22 @@ pub(crate) enum FunctionType {
     SysQuery = 6,
     SysCall = 7,
     UserQuery = 8,
+}
+
+impl Display for FunctionType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FunctionType::Unknown => f.write_str("Unknown"),
+            FunctionType::Event => f.write_str("Event"),
+            FunctionType::Query => f.write_str("Query"),
+            FunctionType::Call => f.write_str("Call"),
+            FunctionType::Database => f.write_str("Database"),
+            FunctionType::Proc => f.write_str("Procedure"),
+            FunctionType::SysQuery => f.write_str("System Query"),
+            FunctionType::SysCall => f.write_str("System Call"),
+            FunctionType::UserQuery => f.write_str("User Query"),
+        }
+    }
 }
 
 #[derive(Debug)]

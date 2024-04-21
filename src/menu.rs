@@ -8,21 +8,31 @@ mod search;
 
 // TODO:
 // - [x] add Osiris function search
+// - [x] add Osiris function search type options
 // - [x] add ability to copy item fields
 // - [x] add console history, clearing console on enter
+// - [x] add hotkey to toggle the menu
 // - [x] add search total
 // - [x] fix selectable in table not covering the entire row's height
 // - [ ] add ability to add/remove fields in object data
 // - [ ] add resizing table, ability add/remove columns
 // - [ ] add regex search
-// - [ ] add Osiris function search type options
 // - [ ] figure Osiris value type names
 // - [ ] add ability to export
-// - [ ] add hotkey to toggle the menu
+// - [ ] add ability to remove items, spells etc.
 // - [ ] add DX11 hooks
-// - [ ] finish other tabs
+// - [ ] add ability to launch Vulkan or DX11
+// - [ ] skip loading the Script Extender(DWrite.dll)
+// - [ ] finish other categories
+//   - [x] Osiris functions
+//   - [-] spells
+//   - [ ] passives
+//   - [ ] conditions
+// - [ ] finish info tab
 
 pub(crate) struct Menu {
+    opened: bool,
+    tip_opened: bool,
     search: search::Search,
     console: console::Console,
 }
@@ -32,12 +42,38 @@ unsafe impl Sync for Menu {}
 
 impl Menu {
     pub fn new() -> Self {
-        Self { search: search::Search::new(), console: console::Console::new() }
+        Self {
+            opened: true,
+            tip_opened: true,
+            search: search::Search::new(),
+            console: console::Console::new(),
+        }
     }
 
     fn render(&mut self, ui: &Ui) {
         let viewport_pos = unsafe { (*igGetMainViewport()).WorkPos };
         let viewport_size = unsafe { (*igGetMainViewport()).WorkSize };
+
+        if ui.is_key_pressed(imgui::Key::F11) {
+            self.opened = !self.opened;
+        }
+
+        if !self.opened {
+            if ui.is_key_pressed(imgui::Key::F9) {
+                self.tip_opened = !self.tip_opened;
+            }
+            if self.tip_opened {
+                ui.window("##open-menu-tip")
+                    .title_bar(false)
+                    .draw_background(false)
+                    .movable(false)
+                    .position([0.0, 0.0], imgui::Condition::Always)
+                    .build(|| {
+                        ui.text("Press F11 to open the Debug Menu, F9 to hide this text");
+                    });
+            }
+            return;
+        }
 
         ui.window("Baldur's Gate 3 Debug Tool")
             .position(
@@ -45,17 +81,11 @@ impl Menu {
                 imgui::Condition::FirstUseEver,
             )
             .size([viewport_size.x / 4.0, viewport_size.y / 4.0], imgui::Condition::FirstUseEver)
-            .collapsed(true, imgui::Condition::FirstUseEver)
+            .opened(&mut self.opened)
             .build(|| {
                 if let Some(tab_bar) = ui.tab_bar("tab-bar") {
-                    if let Some(item) = ui.tab_item("Object Explorer") {
+                    if let Some(item) = ui.tab_item("Game Data Explorer") {
                         self.search.render(ui);
-                        item.end()
-                    }
-                    if let Some(item) = ui.tab_item("Spells") {
-                        item.end()
-                    }
-                    if let Some(item) = ui.tab_item("Passives & Conditions") {
                         item.end()
                     }
                     if let Some(item) = ui.tab_item("Console") {

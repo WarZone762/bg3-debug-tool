@@ -27,7 +27,7 @@ impl Category for FunctionCategory {
     type Item = Function;
     type Options = FunctionOptions;
 
-    const COLS: usize = 1;
+    const COLS: usize = 2;
 
     fn draw_table_row(ui: &Ui, item: &Self::Item, mut height_cb: impl FnMut()) {
         if let Some(ret) = &item.ret_type {
@@ -36,11 +36,27 @@ impl Category for FunctionCategory {
             ui.text_wrapped(format!("{}({})", item.name, item.args.join(", ")));
         }
         height_cb();
+        ui.table_next_column();
+
+        ui.text_wrapped(item.r#type.to_string());
     }
 
     fn draw_options(&mut self, ui: &Ui) -> bool {
-        ui.checkbox("Search Name", &mut self.options.search_name)
-            || ui.checkbox("Search Arguments", &mut self.options.search_args)
+        let mut changed = ui.checkbox("Search Name", &mut self.options.search_name)
+            || ui.checkbox("Search Arguments", &mut self.options.search_args);
+        if let Some(node) = ui.tree_node("Function Types") {
+            changed |= ui.checkbox("Unknown", &mut self.options.incl_unknown);
+            changed |= ui.checkbox("Event", &mut self.options.incl_event);
+            changed |= ui.checkbox("Query", &mut self.options.incl_query);
+            changed |= ui.checkbox("Call", &mut self.options.incl_call);
+            changed |= ui.checkbox("Database", &mut self.options.incl_db);
+            changed |= ui.checkbox("Procedure", &mut self.options.incl_proc);
+            changed |= ui.checkbox("System Query", &mut self.options.incl_sys_query);
+            changed |= ui.checkbox("System Call", &mut self.options.incl_sys_call);
+            changed |= ui.checkbox("User Query", &mut self.options.incl_user_query);
+            node.end();
+        }
+        changed
     }
 
     fn search_filter_map(item: SearchItem) -> Option<Self::Item> {
@@ -51,8 +67,19 @@ impl Category for FunctionCategory {
     }
 
     fn search_filter(item: &Self::Item, opts: &Self::Options, pred: impl Fn(&str) -> bool) -> bool {
-        opts.search_name && pred(&item.name)
-            || opts.search_args && item.args.iter().any(|x| pred(x))
+        (opts.search_name && pred(&item.name)
+            || opts.search_args && item.args.iter().any(|x| pred(x)))
+            && match item.r#type {
+                game_definitions::FunctionType::Unknown => opts.incl_unknown,
+                game_definitions::FunctionType::Event => opts.incl_event,
+                game_definitions::FunctionType::Query => opts.incl_query,
+                game_definitions::FunctionType::Call => opts.incl_call,
+                game_definitions::FunctionType::Database => opts.incl_db,
+                game_definitions::FunctionType::Proc => opts.incl_proc,
+                game_definitions::FunctionType::SysQuery => opts.incl_sys_query,
+                game_definitions::FunctionType::SysCall => opts.incl_sys_call,
+                game_definitions::FunctionType::UserQuery => opts.incl_user_query,
+            }
     }
 
     fn search_iter() -> impl Iterator<Item = SearchItem> {
@@ -64,17 +91,39 @@ impl Category for FunctionCategory {
 pub(crate) struct FunctionOptions {
     search_name: bool,
     search_args: bool,
+    incl_unknown: bool,
+    incl_event: bool,
+    incl_query: bool,
+    incl_call: bool,
+    incl_db: bool,
+    incl_proc: bool,
+    incl_sys_query: bool,
+    incl_sys_call: bool,
+    incl_user_query: bool,
 }
 
 impl Default for FunctionOptions {
     fn default() -> Self {
-        Self { search_name: true, search_args: false }
+        Self {
+            search_name: true,
+            search_args: false,
+            incl_unknown: true,
+            incl_event: true,
+            incl_query: true,
+            incl_call: true,
+            incl_db: true,
+            incl_proc: true,
+            incl_sys_query: true,
+            incl_sys_call: true,
+            incl_user_query: true,
+        }
     }
 }
 
 #[derive(Debug, Clone)]
 pub(crate) struct Function {
     name: String,
+    r#type: game_definitions::FunctionType,
     args: Vec<String>,
     ret_type: Option<String>,
 }
@@ -96,7 +145,7 @@ impl Function {
             }
         }
 
-        Self { name, args, ret_type }
+        Self { name, r#type: f.r#type, args, ret_type }
     }
 
     pub fn render(&mut self, ui: &Ui) {
@@ -104,6 +153,7 @@ impl Function {
             ui.table_next_row();
             ui.table_set_column_index(0);
 
+            object_data_row(ui, "Type", &self.r#type.to_string());
             object_data_row(ui, "Name", &self.name);
             for (i, arg) in self.args.iter().enumerate() {
                 object_data_row(ui, &format!("Argument {i}"), arg);
