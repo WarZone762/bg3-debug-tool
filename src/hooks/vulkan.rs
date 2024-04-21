@@ -267,32 +267,6 @@ impl<M: ImGuiMenu<ash::Device>> VulkanData<M> {
                 )
                 .unwrap();
 
-            let mut barrier = vk::ImageMemoryBarrier::builder()
-                .old_layout(vk::ImageLayout::PRESENT_SRC_KHR)
-                .new_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
-                .src_queue_family_index(self.queue_family)
-                .dst_queue_family_index(self.queue_family)
-                .image(image.image)
-                .subresource_range(vk::ImageSubresourceRange {
-                    aspect_mask: vk::ImageAspectFlags::COLOR,
-                    base_mip_level: 0,
-                    level_count: 1,
-                    base_array_layer: 0,
-                    layer_count: 1,
-                })
-                .src_access_mask(all_read_flags())
-                .dst_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE);
-
-            self.dev.cmd_pipeline_barrier(
-                image.command_buffer,
-                vk::PipelineStageFlags::ALL_COMMANDS,
-                vk::PipelineStageFlags::ALL_COMMANDS,
-                vk::DependencyFlags::empty(),
-                &[],
-                &[],
-                &[*barrier],
-            );
-
             let clear_values = [vk::ClearValue::default()];
             let info = vk::RenderPassBeginInfo::builder()
                 .render_pass(self.swapchain_data.render_pass)
@@ -341,21 +315,6 @@ impl<M: ImGuiMenu<ash::Device>> VulkanData<M> {
 
             self.dev.cmd_end_render_pass(image.command_buffer);
 
-            (barrier.src_queue_family_index, barrier.dst_queue_family_index) =
-                (barrier.dst_queue_family_index, barrier.src_queue_family_index);
-            (barrier.old_layout, barrier.new_layout) = (barrier.new_layout, barrier.old_layout);
-            barrier.src_access_mask = vk::AccessFlags::COLOR_ATTACHMENT_WRITE;
-            barrier.dst_access_mask = all_read_flags();
-
-            self.dev.cmd_pipeline_barrier(
-                image.command_buffer,
-                vk::PipelineStageFlags::ALL_COMMANDS,
-                vk::PipelineStageFlags::ALL_COMMANDS,
-                vk::DependencyFlags::empty(),
-                &[],
-                &[],
-                &[*barrier],
-            );
             self.dev.end_command_buffer(image.command_buffer).unwrap();
 
             let signal_semaphores = [image.semaphore];
@@ -644,6 +603,9 @@ impl SwapchainImageData {
 
     pub fn destroy(self, dev: &ash::Device, command_pool: vk::CommandPool) {
         unsafe {
+            // if self.image != vk::Image::null() {
+            //     dev.destroy_image(self.image, None);
+            // }
             if self.framebuffer != vk::Framebuffer::null() {
                 dev.destroy_framebuffer(self.framebuffer, None);
             }
@@ -661,21 +623,6 @@ impl SwapchainImageData {
             }
         }
     }
-}
-
-#[inline]
-fn all_read_flags() -> vk::AccessFlags {
-    vk::AccessFlags::INDIRECT_COMMAND_READ
-        | vk::AccessFlags::INDEX_READ
-        | vk::AccessFlags::VERTEX_ATTRIBUTE_READ
-        | vk::AccessFlags::UNIFORM_READ
-        | vk::AccessFlags::INPUT_ATTACHMENT_READ
-        | vk::AccessFlags::SHADER_READ
-        | vk::AccessFlags::COLOR_ATTACHMENT_READ
-        | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_READ
-        | vk::AccessFlags::TRANSFER_READ
-        | vk::AccessFlags::HOST_READ
-        | vk::AccessFlags::MEMORY_READ
 }
 
 static mut DATA: Mutex<Option<VulkanData<Box<dyn ImGuiMenu<ash::Device>>>>> = Mutex::new(None);

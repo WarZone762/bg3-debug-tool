@@ -2,7 +2,7 @@ use std::{
     alloc,
     ffi::CStr,
     fmt::{Debug, Display},
-    marker, mem,
+    marker,
 };
 
 use itertools::Itertools;
@@ -130,10 +130,14 @@ impl Debug for OsiArgumentValue {
             ValueType::ItemGuid => unsafe {
                 format!("ItemGuid({})", CStr::from_ptr(self.value.string as _).to_str().unwrap())
             },
-            ValueType::Unknown21 => unsafe {
-                format!("Unknown21({})", CStr::from_ptr(self.value.string as _).to_str().unwrap())
-            },
             ValueType::Undefined => "Undefined".into(),
+            x => unsafe {
+                format!(
+                    "Unknown{}({})",
+                    x as u16,
+                    CStr::from_ptr(self.value.string as _).to_str().unwrap()
+                )
+            },
         };
 
         f.debug_struct("OsiArgumentValue")
@@ -151,12 +155,8 @@ impl Display for OsiArgumentValue {
             ValueType::Integer => unsafe { Display::fmt(&self.value.int32, f) },
             ValueType::Integer64 => unsafe { Display::fmt(&self.value.int64, f) },
             ValueType::Real => unsafe { Display::fmt(&self.value.float, f) },
-            ValueType::String
-            | ValueType::GuidString
-            | ValueType::CharacterGuid
-            | ValueType::ItemGuid
-            | ValueType::Unknown21
-            | ValueType::Undefined => unsafe {
+            ValueType::Undefined => f.write_str("Undefined"),
+            _ => unsafe {
                 Display::fmt(CStr::from_ptr(self.value.string as _).to_str().unwrap(), f)
             },
         }
@@ -256,7 +256,42 @@ pub(crate) enum ValueType {
     GuidString = 5,
     CharacterGuid = 6,
     ItemGuid = 7,
+    Unknown8 = 8,
+    Unknown9 = 9,
+    Unknown10 = 10,
+    Unknown11 = 11,
+    Unknown12 = 12,
+    Unknown13 = 13,
+    Unknown14 = 14,
+    Unknown15 = 15,
+    Unknown16 = 16,
+    Unknown17 = 17,
+    Unknown18 = 18,
+    Unknown19 = 19,
+    Unknown20 = 20,
     Unknown21 = 21,
+    Unknown22 = 22,
+    Unknown23 = 23,
+    Unknown24 = 24,
+    Unknown25 = 25,
+    Unknown26 = 26,
+    Unknown27 = 27,
+    Unknown28 = 28,
+    Unknown29 = 29,
+    Unknown30 = 30,
+    Unknown31 = 31,
+    Unknown32 = 32,
+    Unknown33 = 33,
+    Unknown34 = 34,
+    Unknown35 = 35,
+    Unknown36 = 36,
+    Unknown37 = 37,
+    Unknown38 = 38,
+    Unknown39 = 39,
+    Unknown40 = 40,
+    Unknown41 = 41,
+    Unknown42 = 42,
+    Unknown43 = 43,
     Undefined = 0x7F,
 }
 
@@ -271,7 +306,42 @@ impl From<u16> for ValueType {
             5 => Self::GuidString,
             6 => Self::CharacterGuid,
             7 => Self::ItemGuid,
+            8 => Self::Unknown8,
+            9 => Self::Unknown9,
+            10 => Self::Unknown10,
+            11 => Self::Unknown11,
+            12 => Self::Unknown12,
+            13 => Self::Unknown13,
+            14 => Self::Unknown14,
+            15 => Self::Unknown15,
+            16 => Self::Unknown16,
+            17 => Self::Unknown17,
+            18 => Self::Unknown18,
+            19 => Self::Unknown19,
+            20 => Self::Unknown20,
             21 => Self::Unknown21,
+            22 => Self::Unknown22,
+            23 => Self::Unknown23,
+            24 => Self::Unknown24,
+            25 => Self::Unknown25,
+            26 => Self::Unknown26,
+            27 => Self::Unknown27,
+            28 => Self::Unknown28,
+            29 => Self::Unknown29,
+            30 => Self::Unknown30,
+            31 => Self::Unknown31,
+            32 => Self::Unknown32,
+            33 => Self::Unknown33,
+            34 => Self::Unknown34,
+            35 => Self::Unknown35,
+            36 => Self::Unknown36,
+            37 => Self::Unknown37,
+            38 => Self::Unknown38,
+            39 => Self::Unknown39,
+            40 => Self::Unknown40,
+            41 => Self::Unknown41,
+            42 => Self::Unknown42,
+            43 => Self::Unknown43,
             0x7F => Self::Undefined,
             x => {
                 warn!("unknown Osiris function type {x}");
@@ -284,11 +354,11 @@ impl From<u16> for ValueType {
 #[derive(Debug)]
 #[repr(C)]
 pub(crate) struct FunctionDb {
-    hash: [HashSlot; 1023],
-    num_items: u32,
+    pub hash: [HashSlot; 1023],
+    pub num_items: u32,
 
-    function_id_hash: [FunctionIdHash; 1023],
-    all_function_ids: TMap<u32, u32>,
+    pub function_id_hash: [FunctionIdHash; 1023],
+    pub all_function_ids: TMap<u32, u32>,
     u1: *const (),
     u2: u32,
     u3: [*const (); 8],
@@ -327,7 +397,7 @@ struct FunctionIdHash {
 #[derive(Debug)]
 #[repr(C)]
 pub(crate) struct Function {
-    pub vmt: *const (),
+    pub vptr: *const (),
     pub line: u32,
     pub unknown1: u32,
     pub unknown2: u32,
@@ -359,7 +429,7 @@ impl Function {
 #[derive(Debug)]
 #[repr(C)]
 pub(crate) struct FunctionSignature {
-    pub vmt: *const (),
+    pub vptr: *const (),
     pub name: *const (),
     pub params: GamePtr<FunctionParamList>,
     pub out_param_list: FuncSigOutParamList,
@@ -369,7 +439,7 @@ pub(crate) struct FunctionSignature {
 #[derive(Debug)]
 #[repr(C)]
 pub(crate) struct FunctionParamList {
-    pub vmt: *const (),
+    pub vptr: *const (),
     pub params: List<FunctionParamDesc>,
 }
 
@@ -460,7 +530,7 @@ impl<'a, K: PartialOrd, V> IntoIterator for &'a TMap<K, V> {
     type Item = &'a TMapNode<K, V>;
 
     fn into_iter(self) -> Self::IntoIter {
-        TMapIter { nodes: vec![&self.root] }
+        TMapIter { nodes: vec![&self.root.root] }
     }
 }
 
@@ -473,11 +543,12 @@ impl<'a, K: PartialOrd, V> Iterator for TMapIter<'a, K, V> {
     type Item = &'a TMapNode<K, V>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let last = self.nodes.pop()?;
-        if !last.is_root {
-            self.nodes.push(last.right.as_ref());
-            self.nodes.push(last.left.as_ref());
+        let mut last = self.nodes.pop()?;
+        while last.is_root {
+            last = self.nodes.pop()?;
         }
+        self.nodes.push(last.right.as_ref());
+        self.nodes.push(last.left.as_ref());
         Some(last)
     }
 }

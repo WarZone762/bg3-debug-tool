@@ -26,6 +26,7 @@ debug = []
 [dependencies]
 anyhow = "1.0"
 ash = { version = "0.37", features = ["linked"] }
+bitflags = "2.5.0"
 build-time = "0.1"
 hudhook = "0.6"
 imgui = { version = "0.11", features = ["docking", "tables-api"] }

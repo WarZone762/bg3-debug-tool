@@ -10,7 +10,7 @@ use super::{
 #[derive(Debug)]
 #[repr(C)]
 pub(crate) struct GlobalTemplateManager {
-    vmt: *const (),
+    vptr: *const (),
     tepmlates: Map<FixedString, GamePtr<GameObjectTemplate>>,
     banks: [GamePtr<GlobalTemplateBank>; 2],
 }
@@ -28,7 +28,7 @@ impl GlobalTemplateManager {
 #[derive(Debug)]
 #[repr(C)]
 pub(crate) struct GlobalTemplateBank {
-    vmt: *const (),
+    vptr: *const (),
     pub templates: Map<FixedString, GamePtr<GameObjectTemplate>>,
     field_20: Array<*const ()>,
     field_30: Array<*const ()>,
@@ -84,7 +84,7 @@ impl<'a> From<&'a GameObjectTemplate> for Template<'a> {
 #[derive(Debug)]
 #[repr(C)]
 pub(crate) struct GameObjectTemplate {
-    pub vmt: GamePtr<GameObjectTemplateVMT>,
+    pub vptr: GamePtr<GameObjectTemplateVMT>,
     field_8: u64,
     pub id: FixedString,
     pub template_name: FixedString,
@@ -111,11 +111,11 @@ pub(crate) struct GameObjectTemplate {
 
 impl GameObjectTemplate {
     pub fn get_type(&self) -> &FixedString {
-        (self.vmt.get_type)(self.into()).as_ref()
+        (self.vptr.get_type)(self.into()).as_ref()
     }
 
     pub fn get_real_type(&self) -> &FixedString {
-        (self.vmt.get_real_type)(self.into()).as_ref()
+        (self.vptr.get_real_type)(self.into()).as_ref()
     }
 
     pub fn cast<T>(&self) -> &T {
@@ -333,7 +333,7 @@ pub(crate) struct EquipmentData {
     pub parent_race: MultiHashMap<Guid, Guid>,
     pub sync_with_parent: MultiHashSet<Guid>,
     pub visual_set: *const (),
-    slot_vmt: *const (),
+    slot_vptr: *const (),
     pub slot: Array<FixedString>,
     slot_junk: *const (),
 }
@@ -341,7 +341,7 @@ pub(crate) struct EquipmentData {
 #[derive(Debug)]
 #[repr(C)]
 pub(crate) struct CombatComponentTemplate {
-    vmt: *const (),
+    vptr: *const (),
     pub archetype: OverrideableProperty<FixedString>,
     pub swarm_group: OverrideableProperty<FixedString>,
     pub faction: OverrideableProperty<Guid>,

@@ -77,6 +77,10 @@ impl<TKey: GameHash + Eq, TValue> MultiHashMap<TKey, TValue> {
     pub fn find_index(&self, key: &TKey) -> Option<u32> {
         self.hash_set.find_index(key)
     }
+
+    pub fn iter(&self) -> impl Iterator<Item = &TValue> {
+        self.values.iter()
+    }
 }
 
 #[derive(Debug)]

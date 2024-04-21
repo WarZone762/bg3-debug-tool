@@ -7,13 +7,17 @@ mod console;
 mod search;
 
 // TODO:
+// - [x] add Osiris function search
 // - [x] add ability to copy item fields
 // - [x] add console history, clearing console on enter
+// - [x] add search total
 // - [x] fix selectable in table not covering the entire row's height
 // - [ ] add ability to add/remove fields in object data
 // - [ ] add resizing table, ability add/remove columns
 // - [ ] add regex search
-// - [ ] add Osiris function search
+// - [ ] add Osiris function search type options
+// - [ ] figure Osiris value type names
+// - [ ] add ability to export
 // - [ ] add hotkey to toggle the menu
 // - [ ] add DX11 hooks
 // - [ ] finish other tabs

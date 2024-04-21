@@ -19,7 +19,8 @@ use self::mappings::{
 use crate::{
     err,
     game_definitions::{
-        FixedString, GamePtr, GlobalTemplateManager, LSStringView, TranslatedStringRepository,
+        FixedString, GamePtr, GlobalTemplateManager, LSStringView, SpellPrototypeManager,
+        TranslatedStringRepository,
     },
     globals::Globals,
     warn,
@@ -263,7 +264,7 @@ static_symbols! {
 
     ecs__EntityWorld__Update: fn(),
 
-    eoc__SpellPrototypeManager: *const (),
+    eoc__SpellPrototypeManager: GamePtr<GamePtr<SpellPrototypeManager>>,
     eoc__SpellPrototype__Init: fn(),
 
     eoc__StatusPrototypeManager: *const (),

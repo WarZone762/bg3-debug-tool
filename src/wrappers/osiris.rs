@@ -356,14 +356,8 @@ impl Value {
                 ValueType::Integer => Self::Int(value.value.int32 as _),
                 ValueType::Integer64 => Self::Int(value.value.int64),
                 ValueType::Real => Self::Float(value.value.float),
-                ValueType::String
-                | ValueType::GuidString
-                | ValueType::CharacterGuid
-                | ValueType::ItemGuid
-                | ValueType::Unknown21 => {
-                    Self::String(std::ffi::CStr::from_ptr(value.value.string).into())
-                }
                 ValueType::Undefined => Self::None,
+                _ => Self::String(std::ffi::CStr::from_ptr(value.value.string).into()),
             }
         }
     }
