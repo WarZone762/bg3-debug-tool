@@ -10,7 +10,7 @@ use itertools::Itertools;
 use super::{GamePtr, PtrOrBuf};
 use crate::warn;
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Debug, Clone, Copy)]
 pub(crate) struct OsirisStaticGlobals {
     pub variables: *const (),
     pub types: *const (),
@@ -100,7 +100,7 @@ impl<'a> Iterator for OsiArgumentDescIter<'a> {
     }
 }
 
-#[derive(Default, Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 #[repr(C)]
 pub(crate) struct OsiArgumentValue {
     pub value: OsiArgumentValueUnion,
@@ -244,7 +244,7 @@ impl Default for OsiArgumentValueUnion {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[repr(u16)]
 pub(crate) enum ValueType {
     #[default]

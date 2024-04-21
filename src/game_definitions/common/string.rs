@@ -9,7 +9,7 @@ use anyhow::anyhow;
 use super::{map::GameHash, GamePtr};
 use crate::globals::Globals;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(C)]
 pub(crate) struct FixedString {
     pub index: u32,

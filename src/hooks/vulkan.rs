@@ -646,7 +646,7 @@ extern "C" {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy, Debug)]
+#[derive(Debug, Clone, Copy)]
 #[allow(non_camel_case_types, non_snake_case)]
 struct ImGui_ImplVulkan_InitInfo {
     instance: vk::Instance,

@@ -16,7 +16,7 @@ use windows::{
     },
 };
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Debug, Clone, Copy)]
 pub(crate) struct GameVersionInfo {
     pub(crate) major: u16,
     pub(crate) minor: u16,

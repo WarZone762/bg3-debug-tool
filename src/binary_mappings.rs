@@ -39,7 +39,7 @@ pub(crate) fn init_static_symbols() -> anyhow::Result<()> {
     Ok(())
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Debug, Clone, Copy)]
 pub(crate) struct SymbolMapper {
     pub main_module: ModuleInfo,
     pub static_symbols: StaticSymbols,
@@ -124,7 +124,7 @@ impl SymbolMapper {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Debug, Clone, Copy)]
 pub(crate) struct ModuleInfo {
     pub start: *const u8,
     pub size: usize,
