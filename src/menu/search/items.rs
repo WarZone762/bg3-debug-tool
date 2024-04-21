@@ -1,6 +1,6 @@
 use imgui::Ui;
 
-use super::{object_data_row, templates, Category, Options, SearchItem};
+use super::{object_data_tbl, option_cmp_reverse, templates, Category, Options, SearchItem};
 use crate::{err, game_definitions::ItemTemplate, osi_fn, wrappers::osiris};
 
 #[derive(Debug, Clone, Default)]
@@ -16,15 +16,15 @@ impl ItemsCategory {
     }
 
     pub fn draw_table(&mut self, ui: &Ui) {
-        Self::draw_table_impl(ui, &self.items, &mut self.selected);
+        Self::draw_table_impl(ui, &mut self.items, &mut self.selected);
     }
 }
 
-impl Category for ItemsCategory {
+impl Category<2> for ItemsCategory {
     type Item = Item;
     type Options = ItemsOptions;
 
-    const COLS: usize = 2;
+    const COLS: [&'static str; 2] = ["Display Name", "Internal Name"];
 
     fn draw_table_row(ui: &Ui, item: &Self::Item, mut height_cb: impl FnMut()) {
         if let Some(display_name) = &item.display_name {
@@ -61,6 +61,13 @@ impl Category for ItemsCategory {
     fn search_iter() -> impl Iterator<Item = SearchItem> {
         templates()
     }
+
+    fn sort_pred(column: usize) -> fn(&Self::Item, &Self::Item) -> std::cmp::Ordering {
+        match column {
+            0 => |a, b| option_cmp_reverse(&a.display_name, &b.display_name),
+            _ => |a, b| a.name.cmp(&b.name),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -89,7 +96,7 @@ pub(crate) struct Item {
 impl From<&ItemTemplate> for Item {
     fn from(value: &ItemTemplate) -> Self {
         let name = value.name.to_string();
-        let id = value.id.try_into().unwrap();
+        let id = value.id.into();
         let display_name = (*value.display_name).try_into().ok();
         let desc = (*value.description).try_into().ok();
 
@@ -99,31 +106,25 @@ impl From<&ItemTemplate> for Item {
 
 impl Item {
     pub fn render(&mut self, ui: &Ui) {
-        if let Some(tbl) = ui.begin_table("obj-data-tbl", 2) {
-            ui.table_next_row();
-            ui.table_set_column_index(0);
-
-            object_data_row(ui, "GUID", &self.id);
-            object_data_row(ui, "Name", &self.name);
+        object_data_tbl(ui, |row| {
+            row("GUID", &self.id);
+            row("Name", &self.name);
             if let Some(display_name) = &self.display_name {
-                object_data_row(ui, "Display Name", display_name);
+                row("Display Name", display_name);
             }
             if let Some(desc) = &self.desc {
-                object_data_row(ui, "Description", desc);
+                row("Description", desc);
             }
+        });
+        ui.input_int("Amount", &mut self.give_amount).build();
+        if self.give_amount < 1 {
+            self.give_amount = 1;
+        }
 
-            tbl.end();
-
-            ui.input_int("Amount", &mut self.give_amount).build();
-            if self.give_amount < 1 {
-                self.give_amount = 1;
-            }
-
-            if ui.button("Give") {
-                if let Err(err) = give_item(&self.id, self.give_amount) {
-                    err!("failed to give item: {err}");
-                };
-            }
+        if ui.button("Give") {
+            if let Err(err) = give_item(&self.id, self.give_amount) {
+                err!("failed to give item: {err}");
+            };
         }
     }
 }

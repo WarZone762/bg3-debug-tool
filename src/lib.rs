@@ -1,5 +1,4 @@
 #![feature(let_chains, unboxed_closures, fn_traits)]
-// #![allow(dead_code, unused_variables)]
 
 mod binary_mappings;
 mod game_definitions;

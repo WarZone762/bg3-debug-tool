@@ -1,6 +1,6 @@
 use imgui::Ui;
 
-use super::{object_data_row, Category, Options, SearchItem};
+use super::{object_data_tbl, option_cmp_reverse, Category, Options, SearchItem};
 use crate::{game_definitions::SpellPrototype, globals::Globals};
 
 #[derive(Debug, Clone, Default)]
@@ -16,15 +16,15 @@ impl SpellCategory {
     }
 
     pub fn draw_table(&mut self, ui: &Ui) {
-        Self::draw_table_impl(ui, &self.items, &mut self.selected);
+        Self::draw_table_impl(ui, &mut self.items, &mut self.selected);
     }
 }
 
-impl Category for SpellCategory {
+impl Category<2> for SpellCategory {
     type Item = Spell;
     type Options = SpellOptions;
 
-    const COLS: usize = 2;
+    const COLS: [&'static str; 2] = ["Display Name", "Description"];
 
     fn draw_table_row(ui: &Ui, item: &Self::Item, mut height_cb: impl FnMut()) {
         if let Some(display_name) = &item.display_name {
@@ -57,7 +57,15 @@ impl Category for SpellCategory {
     }
 
     fn search_iter() -> impl Iterator<Item = SearchItem> {
-        spells()
+        let spell_manager = *Globals::static_symbols().eoc__SpellPrototypeManager.unwrap();
+        spell_manager.as_ref().spells.iter().map(|x| x.as_ref().into())
+    }
+
+    fn sort_pred(column: usize) -> fn(&Self::Item, &Self::Item) -> std::cmp::Ordering {
+        match column {
+            0 => |a, b| option_cmp_reverse(&a.display_name, &b.display_name),
+            _ => |a, b| option_cmp_reverse(&a.desc, &b.desc),
+        }
     }
 }
 
@@ -90,23 +98,13 @@ impl From<&SpellPrototype> for Spell {
 
 impl Spell {
     pub fn render(&mut self, ui: &Ui) {
-        if let Some(tbl) = ui.begin_table("obj-data-tbl", 2) {
-            ui.table_next_row();
-            ui.table_set_column_index(0);
-
+        object_data_tbl(ui, |row| {
             if let Some(display_name) = &self.display_name {
-                object_data_row(ui, "Display Name", display_name);
+                row("Display Name", display_name);
             }
             if let Some(desc) = &self.display_name {
-                object_data_row(ui, "Description", desc);
+                row("Description", desc);
             }
-
-            tbl.end();
-        }
+        })
     }
-}
-
-fn spells() -> impl Iterator<Item = SearchItem> {
-    let spell_manager = *Globals::static_symbols().eoc__SpellPrototypeManager.unwrap();
-    spell_manager.as_ref().spells.iter().map(|x| x.as_ref().into())
 }

@@ -1,6 +1,6 @@
 use imgui::Ui;
 
-use super::{object_data_row, templates, Category, Options, SearchItem};
+use super::{object_data_tbl, option_cmp_reverse, templates, Category, Options, SearchItem};
 use crate::game_definitions::{EoCGameObjectTemplate, GameObjectTemplate};
 
 #[derive(Debug, Clone, Default)]
@@ -16,7 +16,7 @@ impl OtherCategory {
     }
 
     pub fn draw_table(&mut self, ui: &Ui) {
-        Self::draw_table_impl(ui, &self.items, &mut self.selected);
+        Self::draw_table_impl(ui, &mut self.items, &mut self.selected);
     }
 }
 
@@ -33,11 +33,11 @@ impl Default for OtherOptions {
     }
 }
 
-impl Category for OtherCategory {
+impl Category<3> for OtherCategory {
     type Item = Other;
     type Options = OtherOptions;
 
-    const COLS: usize = 2;
+    const COLS: [&'static str; 3] = ["Display Name", "Internal Name", "Type"];
 
     fn draw_table_row(ui: &Ui, item: &Self::Item, mut height_cb: impl FnMut()) {
         if let Some(display_name) = &item.display_name {
@@ -47,6 +47,10 @@ impl Category for OtherCategory {
         ui.table_next_column();
 
         ui.text_wrapped(&item.name);
+        height_cb();
+        ui.table_next_column();
+
+        ui.text_wrapped(&item.r#type);
         height_cb();
     }
 
@@ -72,6 +76,14 @@ impl Category for OtherCategory {
     fn search_iter() -> impl Iterator<Item = SearchItem> {
         templates()
     }
+
+    fn sort_pred(column: usize) -> fn(&Self::Item, &Self::Item) -> std::cmp::Ordering {
+        match column {
+            0 => |a, b| option_cmp_reverse(&a.display_name, &b.display_name),
+            1 => |a, b| a.name.cmp(&b.name),
+            _ => |a, b| a.r#type.cmp(&b.r#type),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -79,40 +91,37 @@ pub(crate) struct Other {
     name: String,
     id: String,
     display_name: Option<String>,
+    r#type: String,
 }
 
 impl From<&EoCGameObjectTemplate> for Other {
     fn from(value: &EoCGameObjectTemplate) -> Self {
         let name = value.name.to_string();
-        let id = value.id.try_into().unwrap();
+        let id = value.id.into();
         let display_name = (*value.display_name).try_into().ok();
 
-        Self { name, id, display_name }
+        Self { name, id, display_name, r#type: value.get_type().into() }
     }
 }
 
 impl From<&GameObjectTemplate> for Other {
     fn from(value: &GameObjectTemplate) -> Self {
         let name = value.name.to_string();
-        let id = value.id.try_into().unwrap();
+        let id = value.id.into();
 
-        Self { name, id, display_name: None }
+        Self { name, id, display_name: None, r#type: value.get_type().into() }
     }
 }
 
 impl Other {
     pub fn render(&mut self, ui: &Ui) {
-        if let Some(tbl) = ui.begin_table("obj-data-tbl", 2) {
-            ui.table_next_row();
-            ui.table_set_column_index(0);
-
-            object_data_row(ui, "GUID", &self.id);
-            object_data_row(ui, "Name", &self.name);
+        object_data_tbl(ui, |row| {
+            row("Type", &self.r#type);
+            row("GUID", &self.id);
+            row("Name", &self.name);
             if let Some(display_name) = &self.display_name {
-                object_data_row(ui, "Display Name", display_name);
+                row("Display Name", display_name);
             }
-
-            tbl.end();
-        }
+        })
     }
 }

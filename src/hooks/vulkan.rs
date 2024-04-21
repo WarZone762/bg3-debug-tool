@@ -539,7 +539,6 @@ impl SwapchainData {
 
 #[derive(Debug, Clone)]
 struct SwapchainImageData {
-    image: vk::Image,
     framebuffer: vk::Framebuffer,
     image_view: vk::ImageView,
     command_buffer: vk::CommandBuffer,
@@ -598,14 +597,11 @@ impl SwapchainImageData {
 
         let framebuffer = dev.create_framebuffer(&info, None).unwrap();
 
-        Self { image, framebuffer, image_view, command_buffer, fence, semaphore }
+        Self { framebuffer, image_view, command_buffer, fence, semaphore }
     }
 
     pub fn destroy(self, dev: &ash::Device, command_pool: vk::CommandPool) {
         unsafe {
-            // if self.image != vk::Image::null() {
-            //     dev.destroy_image(self.image, None);
-            // }
             if self.framebuffer != vk::Framebuffer::null() {
                 dev.destroy_framebuffer(self.framebuffer, None);
             }

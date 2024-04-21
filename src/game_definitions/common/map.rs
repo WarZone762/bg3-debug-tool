@@ -26,22 +26,15 @@ pub(crate) struct MapNode<TKey, TValue> {
 
 #[derive(Debug)]
 pub(crate) struct MapIter<'a, K, V> {
-    iter: std::iter::Filter<
-        std::slice::Iter<'a, GamePtr<MapNode<K, V>>>,
-        fn(&&GamePtr<MapNode<K, V>>) -> bool,
-    >,
+    map_arr: &'a [GamePtr<MapNode<K, V>>],
     elem: GamePtr<MapNode<K, V>>,
+    index: u32,
 }
 
 impl<K, V> MapIter<'_, K, V> {
     pub fn new(map: &MapInternals<K, V>) -> Self {
-        let arr = unsafe {
-            std::slice::from_raw_parts::<GamePtr<MapNode<K, V>>>(
-                map.hash_table.ptr,
-                map.hash_size as _,
-            )
-        };
-        Self { iter: arr.iter().filter(|e| !e.is_null()), elem: GamePtr::null() }
+        let map_arr = unsafe { std::slice::from_raw_parts(map.hash_table.ptr, map.hash_size as _) };
+        Self { map_arr, elem: GamePtr::null(), index: 0 }
     }
 }
 
@@ -49,15 +42,16 @@ impl<K, V> Iterator for MapIter<'_, K, V> {
     type Item = GamePtr<MapNode<K, V>>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.elem.is_null() {
-            self.elem = *self.iter.next()?;
+        while self.elem.is_null() {
+            if self.index as usize == self.map_arr.len() {
+                return None;
+            }
+            self.elem = self.map_arr[self.index as usize];
+            self.index += 1;
         }
-
-        let elem = self.elem;
-
-        self.elem = self.elem.next;
-
-        Some(elem)
+        let val = self.elem;
+        self.elem = val.next;
+        Some(val)
     }
 }
 

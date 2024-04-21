@@ -512,7 +512,7 @@ impl Display for FunctionType {
 
 #[derive(Debug)]
 #[repr(C)]
-struct TMap<K: PartialOrd, V> {
+pub(crate) struct TMap<K: PartialOrd, V> {
     root: GamePtr<TMapNode<K, V>>,
 }
 

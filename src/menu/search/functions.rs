@@ -1,6 +1,6 @@
 use imgui::Ui;
 
-use super::{object_data_row, Category, Options, SearchItem};
+use super::{object_data_tbl, Category, Options, SearchItem};
 use crate::{
     game_definitions::{self, OsiStr, ValueType},
     globals::Globals,
@@ -19,15 +19,15 @@ impl FunctionCategory {
     }
 
     pub fn draw_table(&mut self, ui: &Ui) {
-        Self::draw_table_impl(ui, &self.items, &mut self.selected);
+        Self::draw_table_impl(ui, &mut self.items, &mut self.selected);
     }
 }
 
-impl Category for FunctionCategory {
+impl Category<2> for FunctionCategory {
     type Item = Function;
     type Options = FunctionOptions;
 
-    const COLS: usize = 2;
+    const COLS: [&'static str; 2] = ["Name", "Type"];
 
     fn draw_table_row(ui: &Ui, item: &Self::Item, mut height_cb: impl FnMut()) {
         if let Some(ret) = &item.ret_type {
@@ -83,7 +83,15 @@ impl Category for FunctionCategory {
     }
 
     fn search_iter() -> impl Iterator<Item = SearchItem> {
-        functions()
+        let fn_db = *Globals::osiris_globals().functions;
+        fn_db.as_ref().functions().map(|(k, v)| SearchItem::Function(Function::new(k, v)))
+    }
+
+    fn sort_pred(column: usize) -> fn(&Self::Item, &Self::Item) -> std::cmp::Ordering {
+        match column {
+            0 => |a, b| a.name.cmp(&b.name),
+            _ => |a, b| a.r#type.to_string().cmp(&b.r#type.to_string()),
+        }
     }
 }
 
@@ -149,25 +157,15 @@ impl Function {
     }
 
     pub fn render(&mut self, ui: &Ui) {
-        if let Some(tbl) = ui.begin_table("obj-data-tbl", 2) {
-            ui.table_next_row();
-            ui.table_set_column_index(0);
-
-            object_data_row(ui, "Type", &self.r#type.to_string());
-            object_data_row(ui, "Name", &self.name);
+        object_data_tbl(ui, |row| {
+            row("Type", &self.r#type.to_string());
+            row("Name", &self.name);
             for (i, arg) in self.args.iter().enumerate() {
-                object_data_row(ui, &format!("Argument {i}"), arg);
+                row(&format!("Argument {i}"), arg);
             }
             if let Some(ret) = &self.ret_type {
-                object_data_row(ui, "Return Type", ret);
+                row("Return Type", ret);
             }
-
-            tbl.end();
-        }
+        })
     }
-}
-
-fn functions() -> impl Iterator<Item = SearchItem> {
-    let fn_db = *Globals::osiris_globals().functions;
-    fn_db.as_ref().functions().map(|(k, v)| SearchItem::Function(Function::new(k, v)))
 }

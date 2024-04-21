@@ -4,8 +4,6 @@ use std::{
     mem,
 };
 
-use anyhow::anyhow;
-
 use super::{map::GameHash, GamePtr};
 use crate::globals::Globals;
 
@@ -15,12 +13,14 @@ pub(crate) struct FixedString {
     pub index: u32,
 }
 
-impl FixedString {
-    const NULL_INDEX: u32 = 0xFFFFFFFF;
-
-    pub fn new() -> Self {
+impl Default for FixedString {
+    fn default() -> Self {
         Self { index: Self::NULL_INDEX }
     }
+}
+
+impl FixedString {
+    const NULL_INDEX: u32 = 0xFFFFFFFF;
 
     pub fn get(&self) -> Option<LSStringView> {
         if self.is_null() {
@@ -63,11 +63,15 @@ impl GameHash for FixedString {
     }
 }
 
-impl TryInto<String> for FixedString {
-    type Error = anyhow::Error;
+impl From<FixedString> for String {
+    fn from(value: FixedString) -> Self {
+        value.as_str().into()
+    }
+}
 
-    fn try_into(self) -> Result<String, Self::Error> {
-        self.get().map(|x| x.into()).ok_or(anyhow!("failed to find FixedString"))
+impl From<&FixedString> for String {
+    fn from(value: &FixedString) -> Self {
+        value.as_str().into()
     }
 }
 
@@ -104,15 +108,15 @@ impl Display for LSStringView<'_> {
     }
 }
 
-impl Into<String> for LSStringView<'_> {
-    fn into(self) -> String {
-        self.to_string()
+impl From<LSStringView<'_>> for String {
+    fn from(value: LSStringView<'_>) -> Self {
+        value.to_string()
     }
 }
 
 impl<'a> LSStringView<'a> {
     pub fn new() -> Self {
-        Self { data: std::ptr::null(), size: 0, marker: PhantomData::default() }
+        Self { data: std::ptr::null(), size: 0, marker: PhantomData }
     }
 
     pub fn as_str(&self) -> &'a str {

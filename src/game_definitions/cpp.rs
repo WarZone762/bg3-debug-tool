@@ -82,6 +82,18 @@ impl Display for STDString {
     }
 }
 
+impl From<STDString> for String {
+    fn from(value: STDString) -> Self {
+        value.to_string()
+    }
+}
+
+impl From<&STDString> for String {
+    fn from(value: &STDString) -> Self {
+        value.to_string()
+    }
+}
+
 impl PartialEq for STDString {
     fn eq(&self, other: &Self) -> bool {
         self.c_str().eq(other.c_str())

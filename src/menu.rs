@@ -14,14 +14,15 @@ mod search;
 // - [x] add hotkey to toggle the menu
 // - [x] add search total
 // - [x] fix selectable in table not covering the entire row's height
+// - [x] add resizing/adding/removing columns
+// - [x] add table header
 // - [ ] add ability to add/remove fields in object data
-// - [ ] add resizing table, ability add/remove columns
 // - [ ] add regex search
-// - [ ] figure Osiris value type names
+// - [ ] figure out Osiris value type names
 // - [ ] add ability to export
-// - [ ] add ability to remove items, spells etc.
+// - [ ] add ability to remove items, spells etc. from the character
 // - [ ] add DX11 hooks
-// - [ ] add ability to launch Vulkan or DX11
+// - [ ] add ability to launch either Vulkan or DX11
 // - [ ] skip loading the Script Extender(DWrite.dll)
 // - [ ] finish other categories
 //   - [x] Osiris functions
@@ -45,8 +46,8 @@ impl Menu {
         Self {
             opened: true,
             tip_opened: true,
-            search: search::Search::new(),
-            console: console::Console::new(),
+            search: search::Search::default(),
+            console: console::Console::default(),
         }
     }
 

@@ -1,6 +1,6 @@
-use std::borrow::Cow;
+use std::{borrow::Cow, cmp::Ordering};
 
-use imgui::{MouseButton, TableFlags, Ui};
+use imgui::{MouseButton, TableFlags, TableSortDirection, Ui};
 
 use self::{
     functions::{Function, FunctionCategory},
@@ -39,11 +39,13 @@ pub(crate) struct Search {
     spells: SpellCategory,
     functions: FunctionCategory,
     other: OtherCategory,
+    reclaim_focus: bool,
 }
 
-impl Search {
-    pub fn new() -> Self {
+impl Default for Search {
+    fn default() -> Self {
         Self {
+            reclaim_focus: true,
             cur_category: 0,
             text: String::new(),
             options: Options::default(),
@@ -53,13 +55,22 @@ impl Search {
             other: OtherCategory::default(),
         }
     }
+}
 
+impl Search {
     pub fn render(&mut self, ui: &Ui) {
         macro_rules! cur_category {
             ($($tt:tt)*) => {
                 choose_category!(self, $($tt)*)
             };
         }
+
+        ui.combo(
+            "Object Category",
+            &mut self.cur_category,
+            &["Items", "Spells", "Osiris Functions", "Other"],
+            |x| Cow::from(*x),
+        );
 
         if let Some(node) = ui.tree_node("Search Options") {
             if ui.checkbox("Case Sensitive", &mut self.options.case_sensitive) {
@@ -73,13 +84,8 @@ impl Search {
             }
             node.pop();
         }
-        ui.combo(
-            "Object Category",
-            &mut self.cur_category,
-            &["Items", "Spells", "Osiris Functions", "Other"],
-            |x| Cow::from(*x),
-        );
         ui.separator();
+
         ui.text("Search");
         if self.cur_category == 2 {
             ui.same_line();
@@ -88,20 +94,31 @@ impl Search {
                 ui.tooltip(|| ui.text("Only works when a save game is loaded"));
             }
         }
+        if self.reclaim_focus {
+            ui.set_keyboard_focus_here();
+            self.reclaim_focus = false;
+        }
         if ui.input_text("<<", &mut self.text).enter_returns_true(true).build() {
+            self.search();
+        }
+        ui.set_item_default_focus();
+        ui.same_line();
+        if ui.button("Search") {
             self.search();
         }
 
         ui.text(format!("found {} entries", cur_category!(items.len())));
 
-        cur_category!(draw_table(ui));
-
-        ui.same_line();
-        ui.child_window("Object Data").build(|| {
+        if let Some(body) = ui.begin_table_with_flags("body-tbl", 2, TableFlags::RESIZABLE) {
+            ui.table_next_row();
+            ui.table_set_column_index(0);
+            cur_category!(draw_table(ui));
+            ui.table_next_column();
             if let Some(selected_item) = cur_category!(selected) {
                 cur_category!(items[selected_item].render(ui));
             }
-        });
+            body.end();
+        }
     }
 
     fn search(&mut self) {
@@ -112,6 +129,7 @@ impl Search {
         }
 
         cur_category!(search(&self.text, &self.options));
+        self.reclaim_focus = true;
     }
 }
 
@@ -120,8 +138,8 @@ struct Options {
     case_sensitive: bool,
 }
 
-trait Category {
-    const COLS: usize;
+trait Category<const N: usize> {
+    const COLS: [&'static str; N];
     type Item;
     type Options;
 
@@ -129,6 +147,7 @@ trait Category {
     fn draw_options(&mut self, ui: &Ui) -> bool;
     fn search_filter_map(item: SearchItem) -> Option<Self::Item>;
     fn search_filter(item: &Self::Item, opts: &Self::Options, pred: impl Fn(&str) -> bool) -> bool;
+    fn sort_pred(column: usize) -> fn(&Self::Item, &Self::Item) -> Ordering;
 
     fn search_iter() -> impl Iterator<Item = SearchItem>;
 
@@ -159,16 +178,47 @@ trait Category {
         }
     }
 
-    fn draw_table_impl(ui: &Ui, items: &[Self::Item], selected: &mut Option<usize>) {
-        let size = ui.window_size();
-        if let Some(tbl) = ui.begin_table_with_sizing(
+    fn draw_table_impl(ui: &Ui, items: &mut [Self::Item], selected: &mut Option<usize>) {
+        // if let Some(tbl) = ui.begin_table_with_flags(
+        //     "items-tbl",
+        //     Self::COLS,
+        //     TableFlags::SCROLL_Y | TableFlags::RESIZABLE,
+        // ) {
+        // let mut header_setup = Vec::with_capacity(Self::COLS);
+        // for i in 0..Self::COLS {
+        //     header_setup
+        //         .push(TableColumnSetup { name: format!("column {i}"),
+        // ..Default::default() }); }
+        if let Some(tbl) = ui.begin_table_with_flags(
             "items-tbl",
-            Self::COLS,
-            TableFlags::SCROLL_Y,
-            [size[0] * 0.5, -1.0],
-            0.0,
+            Self::COLS.len(),
+            TableFlags::SCROLL_Y
+                | TableFlags::RESIZABLE
+                | TableFlags::REORDERABLE
+                | TableFlags::HIDEABLE
+                | TableFlags::SORTABLE,
         ) {
+            for col in Self::COLS {
+                ui.table_setup_column(col);
+            }
+            ui.table_headers_row();
             ui.table_next_row();
+            if let Some(specs) = ui.table_sort_specs_mut() {
+                specs.conditional_sort(|specs| {
+                    if let Some(specs) = specs.iter().next() {
+                        match specs.sort_direction() {
+                            Some(TableSortDirection::Ascending) => {
+                                items.sort_by(Self::sort_pred(specs.column_idx()))
+                            }
+                            Some(TableSortDirection::Descending) => items.sort_by(|a, b| {
+                                Self::sort_pred(specs.column_idx())(a, b).reverse()
+                            }),
+                            None => (),
+                        }
+                    }
+                });
+            }
+
             for (i, item) in items.iter().enumerate() {
                 ui.table_set_column_index(0);
 
@@ -238,24 +288,40 @@ impl From<&SpellPrototype> for SearchItem {
     }
 }
 
-fn object_data_row(ui: &Ui, name: &str, text: &str) {
-    ui.text(name);
-    ui.table_next_column();
-    ui.text_wrapped(text);
-    copy_popup(ui, text);
-    ui.table_next_column();
+fn option_cmp_reverse<T: Ord>(a: &Option<T>, b: &Option<T>) -> Ordering {
+    let ord = a.cmp(b);
+    if a.is_some() && b.is_none() || a.is_none() && b.is_some() {
+        ord.reverse()
+    } else {
+        ord
+    }
 }
 
-fn copy_popup(ui: &Ui, copy_text: &str) {
-    if ui.is_item_hovered() {
-        if ui.is_mouse_clicked(MouseButton::Right) {
-            ui.set_clipboard_text(copy_text);
-        }
-        if ui.clipboard_text().is_some_and(|x| x == copy_text) {
-            ui.tooltip(|| ui.text("Copied!"));
-        } else {
-            ui.tooltip(|| ui.text("Right click to copy"));
-        }
+fn object_data_tbl(ui: &Ui, f: impl FnOnce(&dyn Fn(&str, &str))) {
+    if let Some(tbl) = ui.begin_table_with_flags("obj-data-tbl", 2, TableFlags::RESIZABLE) {
+        ui.table_next_row();
+        ui.table_set_column_index(0);
+
+        let row = |name: &str, text: &str| {
+            ui.text(name);
+            ui.table_next_column();
+            ui.text_wrapped(text);
+            if ui.is_item_hovered() {
+                if ui.is_mouse_clicked(MouseButton::Right) {
+                    ui.set_clipboard_text(text);
+                }
+                if ui.clipboard_text().is_some_and(|x| x == text) {
+                    ui.tooltip(|| ui.text("Copied!"));
+                } else {
+                    ui.tooltip(|| ui.text("Right click to copy"));
+                }
+            }
+            ui.table_next_column();
+        };
+
+        f(&row);
+
+        tbl.end();
     }
 }
 

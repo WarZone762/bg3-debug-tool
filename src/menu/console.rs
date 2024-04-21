@@ -7,29 +7,41 @@ pub(crate) struct Console {
     text: String,
     output: String,
     history: History,
+    reclaim_focus: bool,
+}
+
+impl Default for Console {
+    fn default() -> Self {
+        Self {
+            text: String::new(),
+            output: String::new(),
+            history: History::new(100),
+            reclaim_focus: true,
+        }
+    }
 }
 
 impl Console {
-    pub fn new() -> Self {
-        Self { text: String::new(), output: String::new(), history: History::new(100) }
-    }
-
     pub fn render(&mut self, ui: &Ui) {
         ui.text("Console");
         ui.text(">>");
         ui.same_line();
+        if self.reclaim_focus {
+            ui.set_keyboard_focus_here();
+            self.reclaim_focus = false;
+        }
         if ui
             .input_text("##input", &mut self.text)
             .callback(InputTextCallback::HISTORY, &mut self.history)
             .enter_returns_true(true)
             .build()
         {
-            self.run(ui);
+            self.run();
         }
         ui.set_item_default_focus();
         ui.same_line();
-        if ui.button("Enter") {
-            self.run(ui);
+        if ui.button("Run") {
+            self.run();
         }
         if ui.button("Clear") {
             self.output.clear();
@@ -37,7 +49,7 @@ impl Console {
         ui.input_text_multiline("##output", &mut self.output, [-1.0, -1.0]).read_only(true).build();
     }
 
-    pub fn run(&mut self, ui: &Ui) {
+    pub fn run(&mut self) {
         self.output.push_str(&format!(">> {}\n", self.text));
         let call = syn::parse_str::<FunctionCall>(&self.text);
         self.history.insert(self.text.clone());
@@ -51,7 +63,7 @@ impl Console {
             Err(x) => self.output.push_str(&x.to_string()),
         }
         self.output.push('\n');
-        ui.set_keyboard_focus_here_with_offset(imgui::FocusedWidget::Previous);
+        self.reclaim_focus = true;
     }
 }
 

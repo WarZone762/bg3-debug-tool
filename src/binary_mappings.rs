@@ -1,3 +1,4 @@
+#![allow(dead_code, unused_variables)]
 use std::{fmt::Debug, mem::size_of_val};
 
 use anyhow::bail;
