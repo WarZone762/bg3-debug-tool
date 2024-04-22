@@ -1,19 +1,16 @@
-use std::{mem, ops::DerefMut, ptr, sync::Mutex};
+use std::{mem, ptr, sync::Mutex};
 
 use ash::vk;
-use windows::Win32::{
-    Foundation::{BOOL, HWND, LPARAM, LRESULT, WPARAM},
-    System::Threading::GetCurrentThread,
-    UI::{
-        Shell::{DefSubclassProc, SetWindowSubclass},
-        WindowsAndMessaging::{EnumWindows, GetWindow, IsWindowVisible, GW_OWNER},
-    },
-};
 
 use crate::{
     hook_definitions,
-    hooks::{DetourTransactionBegin, DetourTransactionCommit, DetourUpdateThread},
+    hooks::detour,
+    menu::{backend, ImGuiMenu},
 };
+
+static mut DATA: Mutex<Option<VulkanData<Box<dyn ImGuiMenu<ash::Device>>>>> = Mutex::new(None);
+static mut DATA_BUILDER: Mutex<VulkanDataBuilder<Box<dyn ImGuiMenu<ash::Device>>>> =
+    Mutex::new(VulkanDataBuilder::new());
 
 pub(crate) fn init(menu: impl ImGuiMenu<ash::Device> + 'static) -> anyhow::Result<()> {
     unsafe {
@@ -35,11 +32,11 @@ vulkan("vulkan-1.dll") {
             ash::Instance::load(ash::Entry::linked().static_fn(), *p_instance)
         };
         unsafe {
-        if let Some(vk_data) = DATA.lock().unwrap().as_mut() {
-            vk_data.instance = instance;
-        } else {
-            DATA_BUILDER.lock().unwrap().instance = Some(instance);
-        }
+            if let Some(vk_data) = DATA.lock().unwrap().as_mut() {
+                vk_data.instance = instance;
+            } else {
+                DATA_BUILDER.lock().unwrap().instance = Some(instance);
+            }
         }
 
         res
@@ -74,28 +71,29 @@ vulkan("vulkan-1.dll") {
                     .position(|x| x.queue_flags.contains(vk::QueueFlags::GRAPHICS))
                     .unwrap() as _;
 
-                // TODO
-                // let create_pipeline_cache = vk_data
-                //     .instance
-                //     .get_device_proc_addr(*p_device, c"vkCreatePipelineCache".as_ptr())
-                //     .unwrap();
-                // let create_swapchain = vk_data
-                //     .instance
-                //     .get_device_proc_addr(*p_device, c"vkCreateSwapchainKHR".as_ptr())
-                //     .unwrap();
-                // let queue_present = vk_data
-                //     .instance
-                //     .get_device_proc_addr(*p_device, c"vkQueuePresentKHR".as_ptr())
-                //     .unwrap();
-                //
-                // DetourTransactionBegin();
-                // DetourUpdateThread(GetCurrentThread());
-                //
-                // HOOKS.vkCreatePipelineCache.attach(create_pipeline_cache as _);
-                // HOOKS.vkCreateSwapchainKHR.attach(create_swapchain as _);
-                // HOOKS.vkQueuePresentKHR.attach(queue_present as _);
-                //
-                // DetourTransactionCommit();
+                let create_pipeline_cache = vk_data
+                    .instance
+                    .get_device_proc_addr(*p_device, c"vkCreatePipelineCache".as_ptr())
+                    .unwrap();
+                let create_swapchain = vk_data
+                    .instance
+                    .get_device_proc_addr(*p_device, c"vkCreateSwapchainKHR".as_ptr())
+                    .unwrap();
+                let queue_present = vk_data
+                    .instance
+                    .get_device_proc_addr(*p_device, c"vkQueuePresentKHR".as_ptr())
+                    .unwrap();
+
+                detour(|| {
+                    HOOKS.vkCreatePipelineCache.detach();
+                    HOOKS.vkCreateSwapchainKHR.detach();
+                    HOOKS.vkQueuePresentKHR.detach();
+                });
+                detour(|| {
+                    HOOKS.vkCreatePipelineCache.attach(create_pipeline_cache as _);
+                    HOOKS.vkCreateSwapchainKHR.attach(create_swapchain as _);
+                    HOOKS.vkQueuePresentKHR.attach(queue_present as _);
+                });
             } else {
                 let mut builder = DATA_BUILDER.lock().unwrap();
                 builder.physical_dev = Some(physical_device);
@@ -127,14 +125,11 @@ vulkan("vulkan-1.dll") {
                     .get_device_proc_addr(*p_device, c"vkQueuePresentKHR".as_ptr())
                     .unwrap();
 
-                DetourTransactionBegin();
-                DetourUpdateThread(GetCurrentThread());
-
-                HOOKS.vkCreatePipelineCache.attach(create_pipeline_cache as _);
-                HOOKS.vkCreateSwapchainKHR.attach(create_swapchain as _);
-                HOOKS.vkQueuePresentKHR.attach(queue_present as _);
-
-                DetourTransactionCommit();
+                detour(|| {
+                    HOOKS.vkCreatePipelineCache.attach(create_pipeline_cache as _);
+                    HOOKS.vkCreateSwapchainKHR.attach(create_swapchain as _);
+                    HOOKS.vkQueuePresentKHR.attach(queue_present as _);
+                });
             }
         }
 
@@ -212,19 +207,13 @@ vulkan("vulkan-1.dll") {
         p_present_info: *const vk::PresentInfoKHR,
     ) -> vk::Result {
         unsafe {
-            DATA
-                .lock()
-                .unwrap()
-                .as_mut()
-                .unwrap()
-                .present(
-                    (p_present_info as *mut vk::PresentInfoKHR).as_mut().unwrap()
-                );
+            if let Some(x) = &mut *DATA.lock().unwrap() {
+                x.present((p_present_info as *mut vk::PresentInfoKHR).as_mut().unwrap())
+            }
         }
 
         original::vkQueuePresentKHR(queue, p_present_info)
     }
-
 }
 }
 
@@ -300,7 +289,7 @@ impl<M: ImGuiMenu<ash::Device>> VulkanData<M> {
             }
 
             ImGui_ImplVulkan_NewFrame();
-            ImGui_ImplWin32_NewFrame();
+            backend::new_frame();
 
             self.menu.pre_render(&mut self.ctx);
             let ui = self.ctx.new_frame();
@@ -377,23 +366,8 @@ impl<M: ImGuiMenu<ash::Device>> VulkanDataBuilder<M> {
 
         unsafe {
             let mut ctx = imgui::Context::create();
-            menu.initialize(&mut ctx, &mut dev);
-
-            unsafe extern "system" fn is_main(handle: HWND, lparam: LPARAM) -> BOOL {
-                if GetWindow(handle, GW_OWNER) == HWND::default()
-                    && IsWindowVisible(handle).as_bool()
-                {
-                    *(lparam.0 as *mut HWND) = handle;
-                    false.into()
-                } else {
-                    true.into()
-                }
-            }
-
-            let mut hwnd = HWND(0);
-            let _ = EnumWindows(Some(is_main), LPARAM(&mut hwnd as *mut _ as _));
-
-            ImGui_ImplWin32_Init(hwnd.0 as _);
+            menu.init(&mut ctx, &mut dev);
+            backend::init();
 
             let queue = dev.get_device_queue(queue_family, 0);
 
@@ -406,27 +380,6 @@ impl<M: ImGuiMenu<ash::Device>> VulkanDataBuilder<M> {
                 .max_sets(1)
                 .pool_sizes(&pool_sizes);
             let descriptor_pool = dev.create_descriptor_pool(&info, None).unwrap();
-
-            unsafe extern "system" fn subclass_wnd_proc(
-                hwnd: HWND,
-                umsg: u32,
-                wparam: WPARAM,
-                lparam: LPARAM,
-                _uid_subclass: usize,
-                _dwref_data: usize,
-            ) -> LRESULT {
-                ImGui_ImplWin32_WndProcHandler(hwnd, umsg, wparam, lparam);
-
-                let data = DATA.get_mut().unwrap();
-                let io = data.as_ref().unwrap().ctx.io();
-                if io.want_capture_mouse || io.want_capture_keyboard {
-                    return LRESULT(1);
-                }
-
-                DefSubclassProc(hwnd, umsg, wparam, lparam)
-            }
-
-            SetWindowSubclass(hwnd, Some(subclass_wnd_proc), 1, 0);
 
             VulkanData {
                 instance,
@@ -621,16 +574,8 @@ impl SwapchainImageData {
     }
 }
 
-static mut DATA: Mutex<Option<VulkanData<Box<dyn ImGuiMenu<ash::Device>>>>> = Mutex::new(None);
-static mut DATA_BUILDER: Mutex<VulkanDataBuilder<Box<dyn ImGuiMenu<ash::Device>>>> =
-    Mutex::new(VulkanDataBuilder::new());
-
 #[link(name = "imgui_backends", kind = "static")]
 extern "C" {
-    fn ImGui_ImplWin32_Init(hwnd: *mut libc::c_void) -> bool;
-    fn ImGui_ImplWin32_WndProcHandler(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM)
-        -> bool;
-    fn ImGui_ImplWin32_NewFrame();
     fn ImGui_ImplVulkan_Init(info: *const ImGui_ImplVulkan_InitInfo, render_pass: vk::RenderPass);
     fn ImGui_ImplVulkan_NewFrame();
     fn ImGui_ImplVulkan_CreateFontsTexture(command_buffer: vk::CommandBuffer) -> bool;
@@ -677,25 +622,5 @@ impl ImGui_ImplVulkan_InitInfo {
             allocator: ptr::null(),
             check_vk_result_fn: None,
         }
-    }
-}
-
-pub(crate) trait ImGuiMenu<InitParam> {
-    fn initialize(&mut self, _ctx: &mut imgui::Context, _params: &mut InitParam) {}
-    fn pre_render(&mut self, _ctx: &mut imgui::Context) {}
-    fn render(&mut self, ui: &mut imgui::Ui);
-}
-
-impl<M: ImGuiMenu<InitParam> + ?Sized, InitParam> ImGuiMenu<InitParam> for Box<M> {
-    fn initialize(&mut self, ctx: &mut imgui::Context, params: &mut InitParam) {
-        Box::deref_mut(self).initialize(ctx, params);
-    }
-
-    fn pre_render(&mut self, ctx: &mut imgui::Context) {
-        Box::deref_mut(self).pre_render(ctx);
-    }
-
-    fn render(&mut self, ui: &mut imgui::Ui) {
-        Box::deref_mut(self).render(ui);
     }
 }

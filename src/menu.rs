@@ -1,8 +1,10 @@
-use hudhook::ImguiRenderLoop;
+use std::ops::DerefMut;
+
 use imgui::{sys::igGetMainViewport, Ui};
 
-use crate::{globals::Globals, hooks::vulkan::ImGuiMenu};
+use crate::globals::Globals;
 
+pub(crate) mod backend;
 mod console;
 mod search;
 
@@ -17,13 +19,14 @@ mod search;
 // - [x] add search total
 // - [x] add table header
 // - [x] fix selectable in table not covering the entire row's height
+// - [x] add DX11 hooks
+// - [x] ~~skip loading the Script Extender(DWrite.dll)~~ (works with SE
+//   somehow)
 // - [ ] finish other categories
 //   - [x] Osiris functions
 //   - [-] spells
 //   - [ ] passives
 //   - [ ] conditions
-// - [ ] skip loading the Script Extender(DWrite.dll)
-// - [ ] add DX11 hooks
 // - [ ] add more fields to objects
 // - [ ] finish info tab
 // - [ ] add ability to remove items, spells etc. from the character
@@ -50,6 +53,15 @@ impl Menu {
             search: search::Search::default(),
             console: console::Console::default(),
         }
+    }
+
+    pub fn init(ctx: &mut imgui::Context) {
+        ctx.set_ini_filename(None);
+        ctx.set_log_filename(None);
+        let io = ctx.io_mut();
+
+        io.config_flags |= imgui::ConfigFlags::NAV_ENABLE_KEYBOARD;
+        io.config_flags |= imgui::ConfigFlags::NAV_ENABLE_GAMEPAD;
     }
 
     fn render(&mut self, ui: &Ui) {
@@ -109,28 +121,42 @@ impl Menu {
     }
 }
 
-impl ImguiRenderLoop for Menu {
-    fn initialize<'a>(&'a mut self, ctx: &mut imgui::Context, _loader: hudhook::TextureLoader<'a>) {
-        ctx.set_ini_filename(None);
-        ctx.set_log_filename(None);
-    }
-
-    fn render(&mut self, ui: &mut Ui) {
-        self.render(ui);
-    }
-}
-
 impl ImGuiMenu<ash::Device> for Menu {
-    fn initialize(&mut self, ctx: &mut imgui::Context, _params: &mut ash::Device) {
-        ctx.set_ini_filename(None);
-        ctx.set_log_filename(None);
-        let io = ctx.io_mut();
-
-        io.config_flags |= imgui::ConfigFlags::NAV_ENABLE_KEYBOARD;
-        io.config_flags |= imgui::ConfigFlags::NAV_ENABLE_GAMEPAD;
+    fn init(&mut self, ctx: &mut imgui::Context, _params: &mut ash::Device) {
+        Self::init(ctx);
     }
 
     fn render(&mut self, ui: &mut imgui::Ui) {
         self.render(ui);
+    }
+}
+
+impl ImGuiMenu<()> for Menu {
+    fn init(&mut self, ctx: &mut imgui::Context, _params: &mut ()) {
+        Self::init(ctx);
+    }
+
+    fn render(&mut self, ui: &mut imgui::Ui) {
+        self.render(ui);
+    }
+}
+
+pub(crate) trait ImGuiMenu<InitParam> {
+    fn init(&mut self, _ctx: &mut imgui::Context, _params: &mut InitParam) {}
+    fn pre_render(&mut self, _ctx: &mut imgui::Context) {}
+    fn render(&mut self, ui: &mut imgui::Ui);
+}
+
+impl<M: ImGuiMenu<InitParam> + ?Sized, InitParam> ImGuiMenu<InitParam> for Box<M> {
+    fn init(&mut self, ctx: &mut imgui::Context, params: &mut InitParam) {
+        Box::deref_mut(self).init(ctx, params);
+    }
+
+    fn pre_render(&mut self, ctx: &mut imgui::Context) {
+        Box::deref_mut(self).pre_render(ctx);
+    }
+
+    fn render(&mut self, ui: &mut imgui::Ui) {
+        Box::deref_mut(self).render(ui);
     }
 }

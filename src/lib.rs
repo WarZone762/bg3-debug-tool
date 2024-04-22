@@ -10,7 +10,6 @@ mod wrappers;
 
 use std::panic;
 
-use hudhook::{hooks::dx11::ImguiDx11Hooks, Hudhook};
 use windows::{
     core::w,
     Win32::{
@@ -71,13 +70,10 @@ fn init() -> anyhow::Result<()> {
     let menu = menu::Menu::new();
     let is_dx11 = unsafe { GetModuleHandleW(w!("bg3_dx11.exe")) }.is_ok_and(|x| !x.is_invalid());
     if is_dx11 {
-        std::thread::spawn(move || {
-            if let Err(e) = Hudhook::builder().with::<ImguiDx11Hooks>(menu).build().apply() {
-                panic!("Couldn't apply hooks: {e:?}");
-            }
-        });
+        hooks::dx11::init(menu)?;
     } else {
         hooks::vulkan::init(menu)?;
     }
+
     Ok(())
 }

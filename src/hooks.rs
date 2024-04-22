@@ -4,10 +4,11 @@ use windows::{
     core::PCSTR,
     Win32::{
         Foundation::{HANDLE, HMODULE},
-        System::LibraryLoader::GetProcAddress,
+        System::{LibraryLoader::GetProcAddress, Threading::GetCurrentThread},
     },
 };
 
+pub(crate) mod dx11;
 pub(crate) mod osiris;
 pub(crate) mod vulkan;
 
@@ -27,21 +28,32 @@ macro_rules! hook_definitions {
                 let $mod_name = windows::Win32::System::LibraryLoader::LoadLibraryW(
                     windows::core::w!($dll_name)
                 )?;
-                $crate::hooks::DetourTransactionBegin();
-                $crate::hooks::DetourUpdateThread(
-                    windows::Win32::System::Threading::GetCurrentThread()
-                );
+                $crate::hooks::detour(|| {
+                    $(
+                        $crate::if_no_init_meta!(
+                            $crate::init_hook_from_name!(
+                                $mod_name,
+                                $name $(, $symbol_name)?
+                            ) $(, $init)?
+                        );
+                    )*
+                });
 
-                $(
-                    $crate::if_no_init_meta!(
-                        $crate::init_hook_from_name!(
-                            $mod_name,
-                            $name $(, $symbol_name)?
-                        ) $(, $init)?
-                    );
-                )*
-
-                $crate::hooks::DetourTransactionCommit();
+                // $crate::hooks::DetourTransactionBegin();
+                // $crate::hooks::DetourUpdateThread(
+                //     windows::Win32::System::Threading::GetCurrentThread()
+                // );
+                //
+                // $(
+                //     $crate::if_no_init_meta!(
+                //         $crate::init_hook_from_name!(
+                //             $mod_name,
+                //             $name $(, $symbol_name)?
+                //         ) $(, $init)?
+                //     );
+                // )*
+                //
+                // $crate::hooks::DetourTransactionCommit();
             }
 
             Ok(())
@@ -157,7 +169,20 @@ extern "system" {
         ppPointer: *mut *const libc::c_void,
         pDetour: *const libc::c_void,
     ) -> libc::c_long;
+    pub fn DetourDetach(
+        ppPointer: *mut *const libc::c_void,
+        pDetour: *const libc::c_void,
+    ) -> libc::c_long;
     pub fn DetourTransactionCommit();
+}
+
+pub(crate) fn detour(f: impl FnOnce()) {
+    unsafe {
+        DetourTransactionBegin();
+        DetourUpdateThread(GetCurrentThread());
+        f();
+        DetourTransactionCommit();
+    }
 }
 
 #[derive(Debug)]
@@ -191,6 +216,10 @@ impl<T> HookableFunction<T> {
         Self { original: None, hook }
     }
 
+    pub fn is_attached(&self) -> bool {
+        self.original.is_some()
+    }
+
     pub fn original(&self) -> &T {
         match &self.original {
             None => panic!("function not initialized"),
@@ -198,8 +227,7 @@ impl<T> HookableFunction<T> {
         }
     }
 
-    /// Must be called after [`DetourTransactionBegin`] and before
-    /// [`DetourTransactionCommit`]
+    /// Must be called inside [`detour`]
     pub fn find_attach(&mut self, module: impl Into<HMODULE>, symbol_name: &CStr) {
         let Some(original) =
             (unsafe { GetProcAddress(module.into(), PCSTR(symbol_name.as_ptr() as _)) })
@@ -209,8 +237,7 @@ impl<T> HookableFunction<T> {
         self.attach(original as _);
     }
 
-    /// Must be called after [`DetourTransactionBegin`] and before
-    /// [`DetourTransactionCommit`]
+    /// Must be called inside [`detour`]
     pub fn attach(&mut self, original: *const ()) -> i32 {
         self.original = Some(unsafe { mem::transmute_copy(&original) });
         unsafe {
@@ -219,5 +246,17 @@ impl<T> HookableFunction<T> {
                 mem::transmute_copy(&self.hook),
             )
         }
+    }
+
+    /// Must be called inside [`detour`]
+    pub fn detach(&mut self) -> i32 {
+        let res = unsafe {
+            DetourDetach(
+                self.original.as_ref().unwrap() as *const _ as _,
+                mem::transmute_copy(&self.hook),
+            )
+        };
+        self.original = None;
+        res
     }
 }

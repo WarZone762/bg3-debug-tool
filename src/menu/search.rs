@@ -65,8 +65,9 @@ impl Search {
             };
         }
 
+        ui.text("Object Category");
         ui.combo(
-            "Object Category",
+            "##object-category-combo",
             &mut self.cur_category,
             &["Items", "Spells", "Osiris Functions", "Other"],
             |x| Cow::from(*x),
