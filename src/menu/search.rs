@@ -2,12 +2,7 @@ use std::{borrow::Cow, cmp::Ordering};
 
 use imgui::{MouseButton, TableFlags, TableSortDirection, Ui};
 
-use self::{
-    functions::{Function, FunctionCategory},
-    items::{Item, ItemsCategory},
-    other::{Other, OtherCategory},
-    spells::{Spell, SpellCategory},
-};
+use self::{functions::Function, items::Item, other::Other, spells::Spell};
 use crate::{
     game_definitions::{SpellPrototype, Template},
     globals::Globals,
@@ -30,15 +25,14 @@ macro_rules! choose_category {
     };
 }
 
-#[derive(Debug, Clone)]
 pub(crate) struct Search {
     cur_category: usize,
     text: String,
     options: Options,
-    items: ItemsCategory,
-    spells: SpellCategory,
-    functions: FunctionCategory,
-    other: OtherCategory,
+    items: ObjectTable<Item>,
+    spells: ObjectTable<Spell>,
+    functions: ObjectTable<Function>,
+    other: ObjectTable<Other>,
     reclaim_focus: bool,
 }
 
@@ -49,10 +43,10 @@ impl Default for Search {
             cur_category: 0,
             text: String::new(),
             options: Options::default(),
-            items: ItemsCategory::default(),
-            spells: SpellCategory::default(),
-            functions: FunctionCategory::default(),
-            other: OtherCategory::default(),
+            items: ObjectTable::default(),
+            spells: ObjectTable::default(),
+            functions: ObjectTable::default(),
+            other: ObjectTable::default(),
         }
     }
 }
@@ -139,68 +133,57 @@ struct Options {
     case_sensitive: bool,
 }
 
-trait Category<const N: usize> {
-    const COLS: [&'static str; N];
-    type Item;
-    type Options;
+pub(crate) struct ObjectTable<T: ObjectTableItem> {
+    pub fields: Box<[Box<dyn TableValueGetter<T>>]>,
+    pub items: Vec<T>,
+    pub selected: Option<usize>,
+    pub options: T::Options,
+}
 
-    fn draw_table_row(ui: &Ui, item: &Self::Item, height_cb: impl FnMut());
-    fn draw_options(&mut self, ui: &Ui) -> bool;
-    fn search_filter_map(item: SearchItem) -> Option<Self::Item>;
-    fn search_filter(item: &Self::Item, opts: &Self::Options, pred: impl Fn(&str) -> bool) -> bool;
-    fn sort_pred(column: usize) -> fn(&Self::Item, &Self::Item) -> Ordering;
-
-    fn search_iter() -> impl Iterator<Item = SearchItem>;
-
-    fn search_impl(
-        items: &mut Vec<Self::Item>,
-        text: &str,
-        opts: &Options,
-        self_opts: &Self::Options,
-        selected: &mut Option<usize>,
-    ) {
-        selected.take();
-        items.clear();
-        if opts.case_sensitive {
-            let pred = &|string: &str| string.contains(text);
-            items.extend(
-                Self::search_iter()
-                    .filter_map(Self::search_filter_map)
-                    .filter(|x| Self::search_filter(x, self_opts, pred)),
-            )
-        } else {
-            let text = text.to_lowercase();
-            let pred = &|string: &str| string.to_lowercase().contains(&text);
-            items.extend(
-                Self::search_iter()
-                    .filter_map(Self::search_filter_map)
-                    .filter(|x| Self::search_filter(x, self_opts, pred)),
-            );
+impl<T: ObjectTableItem> Default for ObjectTable<T> {
+    fn default() -> Self {
+        Self {
+            fields: T::fields(),
+            items: Vec::new(),
+            selected: None,
+            options: T::Options::default(),
         }
     }
+}
 
-    fn draw_table_impl(ui: &Ui, items: &mut [Self::Item], selected: &mut Option<usize>) {
-        // if let Some(tbl) = ui.begin_table_with_flags(
-        //     "items-tbl",
-        //     Self::COLS,
-        //     TableFlags::SCROLL_Y | TableFlags::RESIZABLE,
-        // ) {
-        // let mut header_setup = Vec::with_capacity(Self::COLS);
-        // for i in 0..Self::COLS {
-        //     header_setup
-        //         .push(TableColumnSetup { name: format!("column {i}"),
-        // ..Default::default() }); }
+impl<T: ObjectTableItem> ObjectTable<T> {
+    fn search(&mut self, string: &str, opts: &Options) {
+        self.selected.take();
+        self.items.clear();
+        let mut search = |string: &str, pred: fn(&str, &str) -> bool| {
+            self.items.extend(T::source().filter(|x| {
+                self.fields.iter().filter(|field| field.included_in_search()).any(|field| {
+                    let item = field.search_str(x);
+                    pred(item, string) && x.filter(&self.options)
+                })
+            }))
+        };
+
+        if opts.case_sensitive {
+            search(string, |text, string| text.contains(string))
+        } else {
+            let string = string.to_lowercase();
+            search(&string, |text, string| text.to_lowercase().contains(string))
+        };
+    }
+
+    fn draw_table(&mut self, ui: &Ui) {
         if let Some(tbl) = ui.begin_table_with_flags(
             "items-tbl",
-            Self::COLS.len(),
+            self.fields.len(),
             TableFlags::SCROLL_Y
                 | TableFlags::RESIZABLE
                 | TableFlags::REORDERABLE
                 | TableFlags::HIDEABLE
                 | TableFlags::SORTABLE,
         ) {
-            for col in Self::COLS {
-                ui.table_setup_column(col);
+            for field in self.fields.iter() {
+                ui.table_setup_column(field.name());
             }
             ui.table_headers_row();
             ui.table_next_row();
@@ -208,11 +191,13 @@ trait Category<const N: usize> {
                 specs.conditional_sort(|specs| {
                     if let Some(specs) = specs.iter().next() {
                         match specs.sort_direction() {
-                            Some(TableSortDirection::Ascending) => {
-                                items.sort_by(Self::sort_pred(specs.column_idx()))
-                            }
-                            Some(TableSortDirection::Descending) => items.sort_by(|a, b| {
-                                Self::sort_pred(specs.column_idx())(a, b).reverse()
+                            Some(TableSortDirection::Ascending) => self.items.sort_by(|a, b| {
+                                let field = &self.fields[specs.column_idx()];
+                                field.compare(a, b)
+                            }),
+                            Some(TableSortDirection::Descending) => self.items.sort_by(|a, b| {
+                                let field = &self.fields[specs.column_idx()];
+                                field.compare(a, b).reverse()
                             }),
                             None => (),
                         }
@@ -220,28 +205,161 @@ trait Category<const N: usize> {
                 });
             }
 
-            for (i, item) in items.iter().enumerate() {
+            for (i, item) in self.items.iter().enumerate() {
                 ui.table_set_column_index(0);
 
-                let mut max_height = 0.0;
-                let height_cb = || {
+                self.fields[0].draw(ui, item);
+                let mut max_height = ui.item_rect_size()[1];
+                for field in &self.fields[1..] {
+                    ui.table_next_column();
+                    field.draw(ui, item);
                     max_height = ui.item_rect_size()[1].max(max_height);
-                };
-                Self::draw_table_row(ui, item, height_cb);
+                }
                 ui.same_line();
                 if ui
                     .selectable_config(&format!("##selectable{i}"))
                     .span_all_columns(true)
-                    .selected(selected.is_some_and(|x| x == i))
+                    .selected(self.selected.is_some_and(|x| x == i))
                     .size([0.0, max_height])
                     .build()
                 {
-                    selected.replace(i);
+                    self.selected.replace(i);
                 }
                 ui.table_next_column();
             }
             tbl.end();
         }
+    }
+
+    fn draw_options(&mut self, ui: &Ui) -> bool {
+        let mut changed = false;
+        for field in self.fields.iter_mut() {
+            let mut new = field.included_in_search();
+            changed |= ui.checkbox(field.name(), &mut new);
+            field.included_in_search_set(new);
+        }
+        changed || self.options.draw(ui)
+    }
+}
+
+pub(crate) struct ObjectField<T: ObjectTableItem + 'static, V: TableValue + 'static> {
+    pub name: String,
+    pub included_in_search: bool,
+    pub getter: fn(&T) -> &V,
+}
+
+impl<T: ObjectTableItem, V: TableValue> ObjectField<T, V> {
+    pub fn getter(
+        name: impl AsRef<str>,
+        included_in_search: bool,
+        getter: fn(&T) -> &V,
+    ) -> Box<dyn TableValueGetter<T>> {
+        Box::new(Self { name: name.as_ref().into(), included_in_search, getter })
+    }
+}
+
+pub(crate) trait TableValueGetter<T: ?Sized> {
+    fn name(&self) -> &str;
+    fn included_in_search(&self) -> bool;
+    fn included_in_search_set(&mut self, value: bool);
+    fn search_str<'a>(&self, item: &'a T) -> &'a str;
+    fn draw(&self, ui: &Ui, item: &T);
+    fn compare(&self, a: &T, b: &T) -> Ordering;
+}
+
+impl<T: ObjectTableItem, V: TableValue> TableValueGetter<T> for ObjectField<T, V> {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn included_in_search(&self) -> bool {
+        self.included_in_search
+    }
+
+    fn included_in_search_set(&mut self, value: bool) {
+        self.included_in_search = value;
+    }
+
+    fn search_str<'a>(&self, item: &'a T) -> &'a str {
+        (self.getter)(item).search_str()
+    }
+
+    fn draw(&self, ui: &Ui, item: &T) {
+        (self.getter)(item).draw(ui);
+    }
+
+    fn compare(&self, a: &T, b: &T) -> Ordering {
+        (self.getter)(a).compare((self.getter)(b))
+    }
+}
+
+pub(crate) trait TableValue {
+    fn search_str(&self) -> &str;
+    fn draw(&self, ui: &Ui);
+    fn compare(&self, other: &Self) -> Ordering;
+}
+
+impl TableValue for &str {
+    fn search_str(&self) -> &str {
+        self
+    }
+
+    fn draw(&self, ui: &Ui) {
+        ui.text_wrapped(self);
+    }
+
+    fn compare(&self, other: &Self) -> Ordering {
+        self.cmp(other)
+    }
+}
+
+impl TableValue for String {
+    fn search_str(&self) -> &str {
+        self
+    }
+
+    fn draw(&self, ui: &Ui) {
+        ui.text_wrapped(self);
+    }
+
+    fn compare(&self, other: &Self) -> Ordering {
+        self.cmp(other)
+    }
+}
+
+impl TableValue for Option<String> {
+    fn search_str(&self) -> &str {
+        self.as_deref().unwrap_or("")
+    }
+
+    fn draw(&self, ui: &Ui) {
+        if let Some(text) = self {
+            ui.text_wrapped(text)
+        }
+    }
+
+    fn compare(&self, other: &Self) -> Ordering {
+        option_cmp_reverse(self, other)
+    }
+}
+
+pub(crate) trait ObjectTableItem: Sized {
+    type Options: TableOptions;
+
+    fn fields() -> Box<[Box<dyn TableValueGetter<Self>>]>;
+    fn source() -> impl Iterator<Item = Self>;
+    fn filter(&self, _opts: &Self::Options) -> bool {
+        true
+    }
+}
+
+pub(crate) trait TableOptions: Default {
+    fn draw(&mut self, ui: &Ui) -> bool;
+}
+
+impl TableOptions for () {
+    fn draw(&mut self, _ui: &Ui) -> bool {
+        false
     }
 }
 

@@ -34,6 +34,8 @@ mod search;
 // - [ ] figure out Osiris value type names
 // - [ ] add ability to add/remove fields in object data
 // - [ ] add ability to export game data
+// - [ ] replace Win32 backend with SDL2
+// - [ ] ***add icons***
 
 pub(crate) struct Menu {
     opened: bool,

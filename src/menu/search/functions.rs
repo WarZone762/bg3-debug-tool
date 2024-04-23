@@ -1,132 +1,10 @@
 use imgui::Ui;
 
-use super::{object_data_tbl, Category, Options, SearchItem};
+use super::{object_data_tbl, ObjectField, ObjectTableItem, TableOptions};
 use crate::{
     game_definitions::{self, OsiStr, ValueType},
     globals::Globals,
 };
-
-#[derive(Debug, Clone, Default)]
-pub(crate) struct FunctionCategory {
-    pub items: Vec<Function>,
-    pub selected: Option<usize>,
-    pub options: FunctionOptions,
-}
-
-impl FunctionCategory {
-    pub fn search(&mut self, text: &str, opts: &Options) {
-        Self::search_impl(&mut self.items, text, opts, &self.options, &mut self.selected);
-    }
-
-    pub fn draw_table(&mut self, ui: &Ui) {
-        Self::draw_table_impl(ui, &mut self.items, &mut self.selected);
-    }
-}
-
-impl Category<2> for FunctionCategory {
-    type Item = Function;
-    type Options = FunctionOptions;
-
-    const COLS: [&'static str; 2] = ["Name", "Type"];
-
-    fn draw_table_row(ui: &Ui, item: &Self::Item, mut height_cb: impl FnMut()) {
-        if let Some(ret) = &item.ret_type {
-            ui.text_wrapped(format!("{}({}) -> {ret}", item.name, item.args.join(", ")));
-        } else {
-            ui.text_wrapped(format!("{}({})", item.name, item.args.join(", ")));
-        }
-        height_cb();
-        ui.table_next_column();
-
-        ui.text_wrapped(item.r#type.to_string());
-    }
-
-    fn draw_options(&mut self, ui: &Ui) -> bool {
-        let mut changed = ui.checkbox("Search Name", &mut self.options.search_name)
-            || ui.checkbox("Search Arguments", &mut self.options.search_args);
-        if let Some(node) = ui.tree_node("Function Types") {
-            changed |= ui.checkbox("Unknown", &mut self.options.incl_unknown);
-            changed |= ui.checkbox("Event", &mut self.options.incl_event);
-            changed |= ui.checkbox("Query", &mut self.options.incl_query);
-            changed |= ui.checkbox("Call", &mut self.options.incl_call);
-            changed |= ui.checkbox("Database", &mut self.options.incl_db);
-            changed |= ui.checkbox("Procedure", &mut self.options.incl_proc);
-            changed |= ui.checkbox("System Query", &mut self.options.incl_sys_query);
-            changed |= ui.checkbox("System Call", &mut self.options.incl_sys_call);
-            changed |= ui.checkbox("User Query", &mut self.options.incl_user_query);
-            node.end();
-        }
-        changed
-    }
-
-    fn search_filter_map(item: SearchItem) -> Option<Self::Item> {
-        match item {
-            SearchItem::Function(x) => Some(x),
-            _ => None,
-        }
-    }
-
-    fn search_filter(item: &Self::Item, opts: &Self::Options, pred: impl Fn(&str) -> bool) -> bool {
-        (opts.search_name && pred(&item.name)
-            || opts.search_args && item.args.iter().any(|x| pred(x)))
-            && match item.r#type {
-                game_definitions::FunctionType::Unknown => opts.incl_unknown,
-                game_definitions::FunctionType::Event => opts.incl_event,
-                game_definitions::FunctionType::Query => opts.incl_query,
-                game_definitions::FunctionType::Call => opts.incl_call,
-                game_definitions::FunctionType::Database => opts.incl_db,
-                game_definitions::FunctionType::Proc => opts.incl_proc,
-                game_definitions::FunctionType::SysQuery => opts.incl_sys_query,
-                game_definitions::FunctionType::SysCall => opts.incl_sys_call,
-                game_definitions::FunctionType::UserQuery => opts.incl_user_query,
-            }
-    }
-
-    fn search_iter() -> impl Iterator<Item = SearchItem> {
-        let fn_db = *Globals::osiris_globals().functions;
-        fn_db.as_ref().functions().map(|(k, v)| SearchItem::Function(Function::new(k, v)))
-    }
-
-    fn sort_pred(column: usize) -> fn(&Self::Item, &Self::Item) -> std::cmp::Ordering {
-        match column {
-            0 => |a, b| a.name.cmp(&b.name),
-            _ => |a, b| a.r#type.to_string().cmp(&b.r#type.to_string()),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct FunctionOptions {
-    search_name: bool,
-    search_args: bool,
-    incl_unknown: bool,
-    incl_event: bool,
-    incl_query: bool,
-    incl_call: bool,
-    incl_db: bool,
-    incl_proc: bool,
-    incl_sys_query: bool,
-    incl_sys_call: bool,
-    incl_user_query: bool,
-}
-
-impl Default for FunctionOptions {
-    fn default() -> Self {
-        Self {
-            search_name: true,
-            search_args: false,
-            incl_unknown: true,
-            incl_event: true,
-            incl_query: true,
-            incl_call: true,
-            incl_db: true,
-            incl_proc: true,
-            incl_sys_query: true,
-            incl_sys_call: true,
-            incl_user_query: true,
-        }
-    }
-}
 
 #[derive(Debug, Clone)]
 pub(crate) struct Function {
@@ -134,6 +12,9 @@ pub(crate) struct Function {
     r#type: game_definitions::FunctionType,
     args: Vec<String>,
     ret_type: Option<String>,
+
+    signature: String,
+    type_string: String,
 }
 
 impl Function {
@@ -153,7 +34,20 @@ impl Function {
             }
         }
 
-        Self { name, r#type: f.r#type, args, ret_type }
+        let signature = if let Some(ret) = &ret_type {
+            format!("{name}({}) -> {ret}", args.join(", "))
+        } else {
+            format!("{name}({})", args.join(", "))
+        };
+
+        Self {
+            name,
+            r#type: f.r#type,
+            args,
+            ret_type,
+            signature,
+            type_string: f.r#type.to_string(),
+        }
     }
 
     pub fn render(&mut self, ui: &Ui) {
@@ -167,5 +61,84 @@ impl Function {
                 row("Return Type", ret);
             }
         })
+    }
+}
+
+impl ObjectTableItem for Function {
+    type Options = FunctionOptions;
+
+    fn fields() -> Box<[Box<dyn super::TableValueGetter<Self>>]> {
+        Box::new([
+            ObjectField::getter("Signature", true, |x| &x.signature),
+            ObjectField::getter("Name", false, |x| &x.name),
+            ObjectField::getter("Type", false, |x| &x.type_string),
+        ])
+    }
+
+    fn source() -> impl Iterator<Item = Self> {
+        let fn_db = *Globals::osiris_globals().functions;
+        fn_db.as_ref().functions().map(|(k, v)| Function::new(k, v))
+    }
+
+    fn filter(&self, opts: &Self::Options) -> bool {
+        match self.r#type {
+            game_definitions::FunctionType::Unknown => opts.incl_unknown,
+            game_definitions::FunctionType::Event => opts.incl_event,
+            game_definitions::FunctionType::Query => opts.incl_query,
+            game_definitions::FunctionType::Call => opts.incl_call,
+            game_definitions::FunctionType::Database => opts.incl_db,
+            game_definitions::FunctionType::Proc => opts.incl_proc,
+            game_definitions::FunctionType::SysQuery => opts.incl_sys_query,
+            game_definitions::FunctionType::SysCall => opts.incl_sys_call,
+            game_definitions::FunctionType::UserQuery => opts.incl_user_query,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct FunctionOptions {
+    incl_unknown: bool,
+    incl_event: bool,
+    incl_query: bool,
+    incl_call: bool,
+    incl_db: bool,
+    incl_proc: bool,
+    incl_sys_query: bool,
+    incl_sys_call: bool,
+    incl_user_query: bool,
+}
+
+impl Default for FunctionOptions {
+    fn default() -> Self {
+        Self {
+            incl_unknown: true,
+            incl_event: true,
+            incl_query: true,
+            incl_call: true,
+            incl_db: true,
+            incl_proc: true,
+            incl_sys_query: true,
+            incl_sys_call: true,
+            incl_user_query: true,
+        }
+    }
+}
+
+impl TableOptions for FunctionOptions {
+    fn draw(&mut self, ui: &Ui) -> bool {
+        let mut changed = false;
+        if let Some(node) = ui.tree_node("Function Types") {
+            changed |= ui.checkbox("Unknown", &mut self.incl_unknown);
+            changed |= ui.checkbox("Event", &mut self.incl_event);
+            changed |= ui.checkbox("Query", &mut self.incl_query);
+            changed |= ui.checkbox("Call", &mut self.incl_call);
+            changed |= ui.checkbox("Database", &mut self.incl_db);
+            changed |= ui.checkbox("Procedure", &mut self.incl_proc);
+            changed |= ui.checkbox("System Query", &mut self.incl_sys_query);
+            changed |= ui.checkbox("System Call", &mut self.incl_sys_call);
+            changed |= ui.checkbox("User Query", &mut self.incl_user_query);
+            node.end();
+        }
+        changed
     }
 }
