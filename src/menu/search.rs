@@ -1,4 +1,4 @@
-use std::{borrow::Cow, cmp::Ordering};
+use std::{borrow::Cow, cmp::Ordering, marker::PhantomData};
 
 use imgui::{MouseButton, TableFlags, TableSortDirection, Ui};
 
@@ -109,9 +109,7 @@ impl Search {
             ui.table_set_column_index(0);
             cur_category!(draw_table(ui));
             ui.table_next_column();
-            if let Some(selected_item) = cur_category!(selected) {
-                cur_category!(items[selected_item].render(ui));
-            }
+            cur_category!(draw_details(ui));
             body.end();
         }
     }
@@ -138,6 +136,7 @@ pub(crate) struct ObjectTable<T: ObjectTableItem> {
     pub items: Vec<T>,
     pub selected: Option<usize>,
     pub options: T::Options,
+    pub actions: T::ActionMenu,
 }
 
 impl<T: ObjectTableItem> Default for ObjectTable<T> {
@@ -147,6 +146,7 @@ impl<T: ObjectTableItem> Default for ObjectTable<T> {
             items: Vec::new(),
             selected: None,
             options: T::Options::default(),
+            actions: T::ActionMenu::default(),
         }
     }
 }
@@ -159,7 +159,7 @@ impl<T: ObjectTableItem> ObjectTable<T> {
             self.items.extend(T::source().filter(|x| {
                 self.fields.iter().filter(|field| field.included_in_search()).any(|field| {
                     let item = field.search_str(x);
-                    pred(item, string) && x.filter(&self.options)
+                    pred((*item).as_ref(), string) && x.filter(&self.options)
                 })
             }))
         };
@@ -240,21 +240,86 @@ impl<T: ObjectTableItem> ObjectTable<T> {
         }
         changed || self.options.draw(ui)
     }
+
+    fn draw_details(&mut self, ui: &Ui) {
+        if let Some(selected) = self.selected {
+            let item = &mut self.items[selected];
+            if let Some(tbl) = ui.begin_table_with_flags("obj-data-tbl", 2, TableFlags::RESIZABLE) {
+                ui.table_next_row();
+                ui.table_set_column_index(0);
+
+                for field in self.fields.iter() {
+                    ui.text(field.name());
+                    ui.table_next_column();
+                    field.draw(ui, item);
+                    if ui.is_item_hovered() {
+                        if ui.is_mouse_clicked(MouseButton::Right) {
+                            ui.set_clipboard_text(field.search_str(item).as_ref());
+                        }
+                        if ui
+                            .clipboard_text()
+                            .is_some_and(|x| x == (*field.search_str(item)).as_ref())
+                        {
+                            ui.tooltip(|| ui.text("Copied!"));
+                        } else {
+                            ui.tooltip(|| ui.text("Right click to copy"));
+                        }
+                    }
+                    ui.table_next_column();
+                }
+
+                tbl.end();
+
+                self.actions.draw(ui, item);
+            }
+        }
+    }
 }
 
-pub(crate) struct ObjectField<T: ObjectTableItem + 'static, V: TableValue + 'static> {
+pub(crate) trait Getter<'a, T: ObjectTableItem + 'a> {
+    type Output: TableValue + 'a;
+    fn get(&self, ctx: &'a T) -> Self::Output;
+}
+
+impl<'a, T: ObjectTableItem + 'a, F: Fn(&'a T) -> R, R: TableValue + 'a> Getter<'a, T> for F {
+    type Output = R;
+
+    fn get(&self, ctx: &'a T) -> Self::Output {
+        (self)(ctx)
+    }
+}
+
+pub(crate) struct ObjectField<
+    T: ObjectTableItem,
+    // V: TableValue + 'static,
+    G: for<'a> Getter<'a, T>,
+> {
     pub name: String,
     pub included_in_search: bool,
-    pub getter: fn(&T) -> &V,
+    pub getter: G,
+    marker: PhantomData<T>,
 }
 
-impl<T: ObjectTableItem, V: TableValue> ObjectField<T, V> {
-    pub fn getter(
+impl<T: ObjectTableItem, G: for<'a> Getter<'a, T>> ObjectField<T, G> {
+    pub fn get<'a>(&self, item: &'a T) -> impl TableValue + 'a {
+        self.getter.get(item)
+    }
+
+    pub fn define<'a>(
         name: impl AsRef<str>,
         included_in_search: bool,
-        getter: fn(&T) -> &V,
-    ) -> Box<dyn TableValueGetter<T>> {
-        Box::new(Self { name: name.as_ref().into(), included_in_search, getter })
+        getter: G,
+    ) -> Box<dyn TableValueGetter<T> + 'a>
+    where
+        T: 'a,
+        G: 'a,
+    {
+        Box::new(Self {
+            name: name.as_ref().into(),
+            included_in_search,
+            getter,
+            marker: PhantomData,
+        })
     }
 }
 
@@ -262,12 +327,12 @@ pub(crate) trait TableValueGetter<T: ?Sized> {
     fn name(&self) -> &str;
     fn included_in_search(&self) -> bool;
     fn included_in_search_set(&mut self, value: bool);
-    fn search_str<'a>(&self, item: &'a T) -> &'a str;
+    fn search_str<'a>(&self, item: &'a T) -> Box<dyn AsRef<str> + 'a>;
     fn draw(&self, ui: &Ui, item: &T);
     fn compare(&self, a: &T, b: &T) -> Ordering;
 }
 
-impl<T: ObjectTableItem, V: TableValue> TableValueGetter<T> for ObjectField<T, V> {
+impl<T: ObjectTableItem, G: for<'a> Getter<'a, T>> TableValueGetter<T> for ObjectField<T, G> {
     fn name(&self) -> &str {
         &self.name
     }
@@ -280,56 +345,74 @@ impl<T: ObjectTableItem, V: TableValue> TableValueGetter<T> for ObjectField<T, V
         self.included_in_search = value;
     }
 
-    fn search_str<'a>(&self, item: &'a T) -> &'a str {
-        (self.getter)(item).search_str()
+    fn search_str<'a>(&self, item: &'a T) -> Box<dyn AsRef<str> + 'a> {
+        Box::new(self.get(item).search_str())
     }
 
     fn draw(&self, ui: &Ui, item: &T) {
-        (self.getter)(item).draw(ui);
+        self.get(item).draw(ui);
     }
 
     fn compare(&self, a: &T, b: &T) -> Ordering {
-        (self.getter)(a).compare((self.getter)(b))
+        self.get(a).compare(&self.get(b))
     }
 }
 
-pub(crate) trait TableValue {
-    fn search_str(&self) -> &str;
+pub(crate) trait TableValue: Ord {
+    fn search_str<'a>(self) -> impl AsRef<str> + 'a
+    where
+        Self: 'a;
     fn draw(&self, ui: &Ui);
-    fn compare(&self, other: &Self) -> Ordering;
+    fn compare(&self, other: &Self) -> Ordering {
+        self.cmp(other)
+    }
 }
 
 impl TableValue for &str {
-    fn search_str(&self) -> &str {
+    fn search_str<'a>(self) -> impl AsRef<str> + 'a
+    where
+        Self: 'a,
+    {
         self
     }
 
     fn draw(&self, ui: &Ui) {
         ui.text_wrapped(self);
     }
+}
 
-    fn compare(&self, other: &Self) -> Ordering {
-        self.cmp(other)
+impl TableValue for &String {
+    fn search_str<'a>(self) -> impl AsRef<str> + 'a
+    where
+        Self: 'a,
+    {
+        self
+    }
+
+    fn draw(&self, ui: &Ui) {
+        ui.text_wrapped(self);
     }
 }
 
 impl TableValue for String {
-    fn search_str(&self) -> &str {
+    fn search_str<'a>(self) -> impl AsRef<str> + 'a
+    where
+        Self: 'a,
+    {
         self
     }
 
     fn draw(&self, ui: &Ui) {
         ui.text_wrapped(self);
     }
-
-    fn compare(&self, other: &Self) -> Ordering {
-        self.cmp(other)
-    }
 }
 
-impl TableValue for Option<String> {
-    fn search_str(&self) -> &str {
-        self.as_deref().unwrap_or("")
+impl TableValue for Option<&str> {
+    fn search_str<'a>(self) -> impl AsRef<str> + 'a
+    where
+        Self: 'a,
+    {
+        self.unwrap_or("")
     }
 
     fn draw(&self, ui: &Ui) {
@@ -339,11 +422,17 @@ impl TableValue for Option<String> {
     }
 
     fn compare(&self, other: &Self) -> Ordering {
-        option_cmp_reverse(self, other)
+        let ord = self.cmp(other);
+        if self.is_some() && other.is_none() || self.is_none() && other.is_some() {
+            ord.reverse()
+        } else {
+            ord
+        }
     }
 }
 
 pub(crate) trait ObjectTableItem: Sized {
+    type ActionMenu: TableItemActions<Self>;
     type Options: TableOptions;
 
     fn fields() -> Box<[Box<dyn TableValueGetter<Self>>]>;
@@ -351,6 +440,14 @@ pub(crate) trait ObjectTableItem: Sized {
     fn filter(&self, _opts: &Self::Options) -> bool {
         true
     }
+}
+
+pub(crate) trait TableItemActions<T>: Default {
+    fn draw(&mut self, ui: &Ui, item: &mut T);
+}
+
+impl<T> TableItemActions<T> for () {
+    fn draw(&mut self, _ui: &Ui, _item: &mut T) {}
 }
 
 pub(crate) trait TableOptions: Default {
@@ -404,43 +501,6 @@ impl From<Template<'_>> for SearchItem {
 impl From<&SpellPrototype> for SearchItem {
     fn from(value: &SpellPrototype) -> Self {
         Self::Spell(value.into())
-    }
-}
-
-fn option_cmp_reverse<T: Ord>(a: &Option<T>, b: &Option<T>) -> Ordering {
-    let ord = a.cmp(b);
-    if a.is_some() && b.is_none() || a.is_none() && b.is_some() {
-        ord.reverse()
-    } else {
-        ord
-    }
-}
-
-fn object_data_tbl(ui: &Ui, f: impl FnOnce(&dyn Fn(&str, &str))) {
-    if let Some(tbl) = ui.begin_table_with_flags("obj-data-tbl", 2, TableFlags::RESIZABLE) {
-        ui.table_next_row();
-        ui.table_set_column_index(0);
-
-        let row = |name: &str, text: &str| {
-            ui.text(name);
-            ui.table_next_column();
-            ui.text_wrapped(text);
-            if ui.is_item_hovered() {
-                if ui.is_mouse_clicked(MouseButton::Right) {
-                    ui.set_clipboard_text(text);
-                }
-                if ui.clipboard_text().is_some_and(|x| x == text) {
-                    ui.tooltip(|| ui.text("Copied!"));
-                } else {
-                    ui.tooltip(|| ui.text("Right click to copy"));
-                }
-            }
-            ui.table_next_column();
-        };
-
-        f(&row);
-
-        tbl.end();
     }
 }
 

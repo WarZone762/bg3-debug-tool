@@ -1,6 +1,6 @@
 use imgui::Ui;
 
-use super::{object_data_tbl, templates, ObjectField, ObjectTableItem, SearchItem};
+use super::{templates, ObjectField, ObjectTableItem, SearchItem, TableItemActions};
 use crate::{err, game_definitions::ItemTemplate, osi_fn, wrappers::osiris};
 
 #[derive(Debug, Clone)]
@@ -9,7 +9,6 @@ pub(crate) struct Item {
     id: String,
     display_name: Option<String>,
     desc: Option<String>,
-    give_amount: i32,
 }
 
 impl From<&ItemTemplate> for Item {
@@ -19,19 +18,27 @@ impl From<&ItemTemplate> for Item {
         let display_name = (*value.display_name).try_into().ok();
         let desc = (*value.description).try_into().ok();
 
-        Self { name, id, display_name, desc, give_amount: 1 }
+        Self { name, id, display_name, desc }
     }
 }
 
 impl ObjectTableItem for Item {
+    type ActionMenu = ItemMenu;
     type Options = ();
 
     fn fields() -> Box<[Box<dyn super::TableValueGetter<Self>>]> {
+        // let g = for<'a> |x: &'a Self| -> &'a String { &x.name };
         Box::new([
-            ObjectField::getter("Internal Name", true, |x| &x.name),
-            ObjectField::getter("GUID", false, |x| &x.id),
-            ObjectField::getter("Display Name", true, |x| &x.display_name),
-            ObjectField::getter("Description", false, |x| &x.desc),
+            ObjectField::define("Internal Name", true, for<'a> |x: &'a Self| -> &'a str {
+                &x.name
+            }),
+            ObjectField::define("GUID", false, for<'a> |x: &'a Self| -> &'a str { &x.id }),
+            ObjectField::define("Display Name", true, for<'a> |x: &'a Self| -> Option<&'a str> {
+                x.display_name.as_deref()
+            }),
+            ObjectField::define("Description", false, for<'a> |x: &'a Self| -> Option<&'a str> {
+                x.desc.as_deref()
+            }),
         ])
     }
 
@@ -43,25 +50,26 @@ impl ObjectTableItem for Item {
     }
 }
 
-impl Item {
-    pub fn render(&mut self, ui: &Ui) {
-        object_data_tbl(ui, |row| {
-            row("GUID", &self.id);
-            row("Name", &self.name);
-            if let Some(display_name) = &self.display_name {
-                row("Display Name", display_name);
-            }
-            if let Some(desc) = &self.desc {
-                row("Description", desc);
-            }
-        });
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ItemMenu {
+    give_amount: i32,
+}
+
+impl Default for ItemMenu {
+    fn default() -> Self {
+        Self { give_amount: 1 }
+    }
+}
+
+impl TableItemActions<Item> for ItemMenu {
+    fn draw(&mut self, ui: &Ui, item: &mut Item) {
         ui.input_int("Amount", &mut self.give_amount).build();
         if self.give_amount < 1 {
             self.give_amount = 1;
         }
 
         if ui.button("Give") {
-            if let Err(err) = give_item(&self.id, self.give_amount) {
+            if let Err(err) = give_item(&item.id, self.give_amount) {
                 err!("failed to give item: {err}");
             };
         }

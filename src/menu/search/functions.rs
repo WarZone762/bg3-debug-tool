@@ -1,6 +1,6 @@
 use imgui::Ui;
 
-use super::{object_data_tbl, ObjectField, ObjectTableItem, TableOptions};
+use super::{ObjectField, ObjectTableItem, TableOptions};
 use crate::{
     game_definitions::{self, OsiStr, ValueType},
     globals::Globals,
@@ -12,9 +12,6 @@ pub(crate) struct Function {
     r#type: game_definitions::FunctionType,
     args: Vec<String>,
     ret_type: Option<String>,
-
-    signature: String,
-    type_string: String,
 }
 
 impl Function {
@@ -34,44 +31,28 @@ impl Function {
             }
         }
 
-        let signature = if let Some(ret) = &ret_type {
-            format!("{name}({}) -> {ret}", args.join(", "))
-        } else {
-            format!("{name}({})", args.join(", "))
-        };
-
-        Self {
-            name,
-            r#type: f.r#type,
-            args,
-            ret_type,
-            signature,
-            type_string: f.r#type.to_string(),
-        }
-    }
-
-    pub fn render(&mut self, ui: &Ui) {
-        object_data_tbl(ui, |row| {
-            row("Type", &self.r#type.to_string());
-            row("Name", &self.name);
-            for (i, arg) in self.args.iter().enumerate() {
-                row(&format!("Argument {i}"), arg);
-            }
-            if let Some(ret) = &self.ret_type {
-                row("Return Type", ret);
-            }
-        })
+        Self { name, r#type: f.r#type, args, ret_type }
     }
 }
 
 impl ObjectTableItem for Function {
+    type ActionMenu = ();
     type Options = FunctionOptions;
 
     fn fields() -> Box<[Box<dyn super::TableValueGetter<Self>>]> {
         Box::new([
-            ObjectField::getter("Signature", true, |x| &x.signature),
-            ObjectField::getter("Name", false, |x| &x.name),
-            ObjectField::getter("Type", false, |x| &x.type_string),
+            ObjectField::define("Signature", true, for<'a> |x: &'a Self| -> String {
+                if let Some(ret) = &x.ret_type {
+                    format!("{}({}) -> {ret}", x.name, x.args.join(", "))
+                } else {
+                    format!("{}({})", x.name, x.args.join(", "))
+                }
+            }),
+            // ObjectField::define("Signature", true, |x| format!("123")),
+            ObjectField::define("Name", false, for<'a> |x: &'a Self| -> &'a str { &x.name }),
+            ObjectField::define("Type", false, for<'a> |x: &'a Self| -> String {
+                x.r#type.to_string()
+            }),
         ])
     }
 

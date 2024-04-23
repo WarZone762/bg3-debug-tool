@@ -1,6 +1,4 @@
-use imgui::Ui;
-
-use super::{object_data_tbl, templates, ObjectField, ObjectTableItem, SearchItem};
+use super::{templates, ObjectField, ObjectTableItem, SearchItem};
 use crate::game_definitions::{EoCGameObjectTemplate, GameObjectTemplate};
 
 #[derive(Debug, Clone)]
@@ -31,14 +29,19 @@ impl From<&GameObjectTemplate> for Other {
 }
 
 impl ObjectTableItem for Other {
+    type ActionMenu = ();
     type Options = ();
 
     fn fields() -> Box<[Box<dyn super::TableValueGetter<Self>>]> {
         Box::new([
-            ObjectField::getter("Internal Name", true, |x| &x.name),
-            ObjectField::getter("GUID", false, |x| &x.id),
-            ObjectField::getter("Display Name", true, |x| &x.display_name),
-            ObjectField::getter("Type", false, |x| &x.r#type),
+            ObjectField::define("Internal Name", true, for<'a> |x: &'a Self| -> &'a str {
+                &x.name
+            }),
+            ObjectField::define("GUID", false, for<'a> |x: &'a Self| -> &'a str { &x.id }),
+            ObjectField::define("Display Name", true, for<'a> |x: &'a Self| -> Option<&'a str> {
+                x.display_name.as_deref()
+            }),
+            ObjectField::define("Type", false, for<'a> |x: &'a Self| -> &'a str { &x.r#type }),
         ])
     }
 
@@ -46,19 +49,6 @@ impl ObjectTableItem for Other {
         templates().filter_map(|x| match x {
             SearchItem::Other(x) => Some(x),
             _ => None,
-        })
-    }
-}
-
-impl Other {
-    pub fn render(&mut self, ui: &Ui) {
-        object_data_tbl(ui, |row| {
-            row("Type", &self.r#type);
-            row("GUID", &self.id);
-            row("Name", &self.name);
-            if let Some(display_name) = &self.display_name {
-                row("Display Name", display_name);
-            }
         })
     }
 }

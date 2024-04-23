@@ -1,6 +1,4 @@
-use imgui::Ui;
-
-use super::{object_data_tbl, ObjectField, ObjectTableItem};
+use super::{ObjectField, ObjectTableItem};
 use crate::{game_definitions::SpellPrototype, globals::Globals};
 
 #[derive(Debug, Clone)]
@@ -18,26 +16,18 @@ impl From<&SpellPrototype> for Spell {
     }
 }
 
-impl Spell {
-    pub fn render(&mut self, ui: &Ui) {
-        object_data_tbl(ui, |row| {
-            if let Some(display_name) = &self.display_name {
-                row("Display Name", display_name);
-            }
-            if let Some(desc) = &self.display_name {
-                row("Description", desc);
-            }
-        })
-    }
-}
-
 impl ObjectTableItem for Spell {
+    type ActionMenu = ();
     type Options = ();
 
     fn fields() -> Box<[Box<dyn super::TableValueGetter<Self>>]> {
         Box::new([
-            ObjectField::getter("Display Name", true, |x| &x.display_name),
-            ObjectField::getter("Description", false, |x| &x.desc),
+            ObjectField::define("Display Name", true, for<'a> |x: &'a Self| -> Option<&'a str> {
+                x.display_name.as_deref()
+            }),
+            ObjectField::define("Description", false, for<'a> |x: &'a Self| -> Option<&'a str> {
+                x.desc.as_deref()
+            }),
         ])
     }
 
