@@ -1,5 +1,6 @@
 use std::{mem, ops::Deref};
 
+use game_object::GameObject;
 use x86_64::registers::segmentation::Segment64;
 
 use super::{
@@ -81,19 +82,25 @@ impl<'a> From<&'a GameObjectTemplate> for Template<'a> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, GameObject)]
 #[repr(C)]
 pub(crate) struct GameObjectTemplate {
+    #[skip]
     pub vptr: GamePtr<GameObjectTemplateVMT>,
     field_8: u64,
     pub id: FixedString,
+    #[default_shown]
     pub template_name: FixedString,
     pub parent_template_id: FixedString,
+    #[default_shown]
     pub name: STDString,
     pub group_id: OverrideableProperty<u32>,
     pub level_name: FixedString,
+    #[skip]
     pad: [u8; 4],
+    #[skip]
     pub camera_offset: OverrideableProperty<glm::Vec3>,
+    #[skip]
     pub transform: OverrideableProperty<Transform>,
     pub visual_template: OverrideableProperty<FixedString>,
     pub physics_template: OverrideableProperty<FixedString>,
@@ -106,6 +113,7 @@ pub(crate) struct GameObjectTemplate {
     pub global_deleted_flag: u8,
     pub render_channel: OverrideableProperty<u8>,
     pub parent_template_flags: u8,
+    #[default_shown]
     pub file_name: STDString,
 }
 

@@ -1,5 +1,4 @@
-use super::{ObjectField, ObjectTableItem};
-use crate::{game_definitions::SpellPrototype, globals::Globals};
+use crate::game_definitions::SpellPrototype;
 
 #[derive(Debug, Clone)]
 pub(crate) struct Spell {
@@ -16,23 +15,30 @@ impl From<&SpellPrototype> for Spell {
     }
 }
 
-impl ObjectTableItem for Spell {
-    type ActionMenu = ();
-    type Options = ();
-
-    fn fields() -> Box<[Box<dyn super::TableValueGetter<Self>>]> {
-        Box::new([
-            ObjectField::define("Display Name", true, for<'a> |x: &'a Self| -> Option<&'a str> {
-                x.display_name.as_deref()
-            }),
-            ObjectField::define("Description", false, for<'a> |x: &'a Self| -> Option<&'a str> {
-                x.desc.as_deref()
-            }),
-        ])
-    }
-
-    fn source() -> impl Iterator<Item = Self> {
-        let spell_manager = *Globals::static_symbols().eoc__SpellPrototypeManager.unwrap();
-        spell_manager.as_ref().spells.iter().map(|x| x.as_ref().into())
-    }
-}
+// impl ObjectTableItem for Spell {
+//     type ActionMenu = ();
+//     type Options = ();
+//
+//     fn fields() -> Box<[Box<dyn super::TableValueGetter<Self>>]> {
+//         Box::new([
+//             ObjectField::define(
+//                 "Display Name",
+//                 true,
+//                 true,
+//                 for<'a> |x: &'a Self| -> Option<&'a str> {
+// x.display_name.as_deref() },             ),
+//             ObjectField::define(
+//                 "Description",
+//                 true,
+//                 false,
+//                 for<'a> |x: &'a Self| -> Option<&'a str> { x.desc.as_deref()
+// },             ),
+//         ])
+//     }
+//
+//     // fn source() -> impl Iterator<Item = Self> {
+//     //     let spell_manager =
+//     // *Globals::static_symbols().eoc__SpellPrototypeManager.unwrap();
+//     //     spell_manager.as_ref().spells.iter().map(|x| x.as_ref().into())
+//     // }
+// }

@@ -23,8 +23,8 @@ pub(crate) struct Transform {
 #[derive(Debug)]
 #[repr(C)]
 pub(crate) struct OverrideableProperty<T> {
-    value: T,
-    is_overriden: bool,
+    pub value: T,
+    pub is_overriden: bool,
 }
 
 impl<T> Deref for OverrideableProperty<T> {

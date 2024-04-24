@@ -2,12 +2,13 @@ use std::{
     fmt::{Debug, Display},
     marker::PhantomData,
     mem,
+    ops::Deref,
 };
 
 use super::{map::GameHash, GamePtr};
 use crate::globals::Globals;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(C)]
 pub(crate) struct FixedString {
     pub index: u32,
@@ -22,7 +23,7 @@ impl Default for FixedString {
 impl FixedString {
     const NULL_INDEX: u32 = 0xFFFFFFFF;
 
-    pub fn get(&self) -> Option<LSStringView> {
+    pub fn get(&self) -> Option<LSStringView<'static>> {
         if self.is_null() {
             return None;
         }
@@ -50,6 +51,15 @@ impl FixedString {
 
     pub fn as_str(&self) -> &str {
         self.get().map(|x| x.as_str()).expect("failed to find FixedString")
+    }
+}
+
+impl Display for FixedString {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.get() {
+            Some(x) => f.write_str(x.as_str()),
+            None => Ok(()),
+        }
     }
 }
 
@@ -114,6 +124,33 @@ impl From<LSStringView<'_>> for String {
     }
 }
 
+impl Deref for LSStringView<'_> {
+    type Target = str;
+
+    fn deref(&self) -> &Self::Target {
+        self.as_str()
+    }
+}
+
+impl PartialEq for LSStringView<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        self.as_str().eq(other.as_str())
+    }
+}
+impl Eq for LSStringView<'_> {}
+
+impl PartialOrd for LSStringView<'_> {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for LSStringView<'_> {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.as_str().cmp(other.as_str())
+    }
+}
+
 impl<'a> LSStringView<'a> {
     pub fn new() -> Self {
         Self { data: std::ptr::null(), size: 0, marker: PhantomData }
@@ -126,9 +163,9 @@ impl<'a> LSStringView<'a> {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(C)]
-pub(crate) struct Guid(u64, u64);
+pub(crate) struct Guid(pub u64, pub u64);
 
 impl GameHash for Guid {
     fn hash(&self) -> u64 {

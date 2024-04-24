@@ -1,6 +1,6 @@
 use imgui::Ui;
 
-use super::{ObjectField, ObjectTableItem, TableOptions};
+use super::{TableColumn, TableItem, TableItemCategory};
 use crate::{
     game_definitions::{self, OsiStr, ValueType},
     globals::Globals,
@@ -35,49 +35,38 @@ impl Function {
     }
 }
 
-impl ObjectTableItem for Function {
-    type ActionMenu = ();
-    type Options = FunctionOptions;
-
-    fn fields() -> Box<[Box<dyn super::TableValueGetter<Self>>]> {
-        Box::new([
-            ObjectField::define("Signature", true, for<'a> |x: &'a Self| -> String {
-                if let Some(ret) = &x.ret_type {
-                    format!("{}({}) -> {ret}", x.name, x.args.join(", "))
-                } else {
-                    format!("{}({})", x.name, x.args.join(", "))
-                }
-            }),
-            // ObjectField::define("Signature", true, |x| format!("123")),
-            ObjectField::define("Name", false, for<'a> |x: &'a Self| -> &'a str { &x.name }),
-            ObjectField::define("Type", false, for<'a> |x: &'a Self| -> String {
-                x.r#type.to_string()
-            }),
-        ])
+impl TableItem for Function {
+    fn columns() -> Box<[TableColumn]> {
+        Box::new([TableColumn::new("Signature", true, true), TableColumn::new("Type", true, true)])
     }
 
-    fn source() -> impl Iterator<Item = Self> {
-        let fn_db = *Globals::osiris_globals().functions;
-        fn_db.as_ref().functions().map(|(k, v)| Function::new(k, v))
-    }
-
-    fn filter(&self, opts: &Self::Options) -> bool {
-        match self.r#type {
-            game_definitions::FunctionType::Unknown => opts.incl_unknown,
-            game_definitions::FunctionType::Event => opts.incl_event,
-            game_definitions::FunctionType::Query => opts.incl_query,
-            game_definitions::FunctionType::Call => opts.incl_call,
-            game_definitions::FunctionType::Database => opts.incl_db,
-            game_definitions::FunctionType::Proc => opts.incl_proc,
-            game_definitions::FunctionType::SysQuery => opts.incl_sys_query,
-            game_definitions::FunctionType::SysCall => opts.incl_sys_call,
-            game_definitions::FunctionType::UserQuery => opts.incl_user_query,
+    fn draw(&self, ui: &Ui, i: usize) {
+        match i {
+            0 => ui.text_wrapped(if let Some(ret) = &self.ret_type {
+                format!("{}({}) -> {ret}", self.name, self.args.join(", "))
+            } else {
+                format!("{}({})", self.name, self.args.join(", "))
+            }),
+            1 => ui.text_wrapped(self.r#type.to_string()),
+            _ => unreachable!(),
         }
+    }
+
+    fn search_str(&self, i: usize) -> String {
+        match i {
+            0 => self.name.clone(),
+            1 => self.r#type.to_string(),
+            _ => unreachable!(),
+        }
+    }
+
+    fn compare(&self, other: &Self, i: usize) -> std::cmp::Ordering {
+        self.search_str(i).cmp(&other.search_str(i))
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct FunctionOptions {
+#[derive(Clone, Copy)]
+pub(crate) struct FunctionCategory {
     incl_unknown: bool,
     incl_event: bool,
     incl_query: bool,
@@ -89,7 +78,7 @@ pub(crate) struct FunctionOptions {
     incl_user_query: bool,
 }
 
-impl Default for FunctionOptions {
+impl Default for FunctionCategory {
     fn default() -> Self {
         Self {
             incl_unknown: true,
@@ -105,8 +94,29 @@ impl Default for FunctionOptions {
     }
 }
 
-impl TableOptions for FunctionOptions {
-    fn draw(&mut self, ui: &Ui) -> bool {
+impl TableItemCategory for FunctionCategory {
+    type Item = Function;
+
+    fn source() -> impl Iterator<Item = Self::Item> {
+        let fn_db = *Globals::osiris_globals().functions;
+        fn_db.as_ref().functions().map(|(k, v)| Function::new(k, v))
+    }
+
+    fn filter(&self, item: &Self::Item) -> bool {
+        match item.r#type {
+            game_definitions::FunctionType::Unknown => self.incl_unknown,
+            game_definitions::FunctionType::Event => self.incl_event,
+            game_definitions::FunctionType::Query => self.incl_query,
+            game_definitions::FunctionType::Call => self.incl_call,
+            game_definitions::FunctionType::Database => self.incl_db,
+            game_definitions::FunctionType::Proc => self.incl_proc,
+            game_definitions::FunctionType::SysQuery => self.incl_sys_query,
+            game_definitions::FunctionType::SysCall => self.incl_sys_call,
+            game_definitions::FunctionType::UserQuery => self.incl_user_query,
+        }
+    }
+
+    fn draw_options(&mut self, ui: &Ui) -> bool {
         let mut changed = false;
         if let Some(node) = ui.tree_node("Function Types") {
             changed |= ui.checkbox("Unknown", &mut self.incl_unknown);

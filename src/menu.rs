@@ -6,7 +6,7 @@ use crate::globals::Globals;
 
 pub(crate) mod backend;
 mod console;
-mod search;
+pub(crate) mod search;
 
 // TODO:
 // - [x] add Osiris function search

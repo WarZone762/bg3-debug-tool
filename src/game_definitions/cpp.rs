@@ -2,6 +2,7 @@ use std::{
     alloc,
     ffi::CStr,
     fmt::{Debug, Display},
+    ops::Deref,
 };
 
 use super::PtrOrBuf;
@@ -99,10 +100,25 @@ impl PartialEq for STDString {
         self.c_str().eq(other.c_str())
     }
 }
+impl Eq for STDString {}
 
 impl PartialOrd for STDString {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        self.c_str().partial_cmp(other.c_str())
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for STDString {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.c_str().cmp(other.c_str())
+    }
+}
+
+impl Deref for STDString {
+    type Target = str;
+
+    fn deref(&self) -> &Self::Target {
+        self.as_str()
     }
 }
 
