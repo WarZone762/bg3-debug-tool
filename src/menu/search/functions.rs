@@ -75,7 +75,11 @@ impl TableItem for Function {
         }
     }
 
-    fn visit_field<T: GameObjectVisitor>(&self, visitor: &mut T, name: &str) -> Option<T::Return> {
+    fn visit_field<T: GameObjectVisitor>(
+        &self,
+        _visitor: &mut T,
+        _name: &str,
+    ) -> Option<T::Return> {
         unimplemented!()
     }
 
@@ -131,9 +135,9 @@ impl Default for FunctionCategory {
 impl TableItemCategory for FunctionCategory {
     type Item = Function;
 
-    fn source() -> impl Iterator<Item = Self::Item> {
-        let fn_db = *Globals::osiris_globals().functions;
-        fn_db.as_ref().functions().map(|(k, v)| Function::new(k, v))
+    fn source() -> Option<impl Iterator<Item = Self::Item>> {
+        let fn_db = Globals::osiris_globals().functions.as_opt()?.as_opt()?;
+        (fn_db.num_items != 0).then(|| fn_db.functions().map(|(k, v)| Function::new(k, v)))
     }
 
     fn filter(&self, item: &Self::Item) -> bool {

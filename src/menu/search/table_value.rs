@@ -5,8 +5,8 @@ use itertools::Itertools;
 
 use super::table::{details_view, TableItem};
 use crate::game_definitions::{
-    Array, FixedString, GameHash, GamePtr, Guid, LSStringView, MultiHashMap, MultiHashSet,
-    OverrideableProperty, STDString, TranslatedString,
+    Array, CompactSet, FixedString, GameHash, GamePtr, Guid, LSStringView, MultiHashMap,
+    MultiHashSet, OverrideableProperty, STDString, Set, TranslatedString,
 };
 
 pub(crate) trait GameObjectVisitor {
@@ -488,6 +488,36 @@ impl<V: TableValue> TableItem for Array<V> {
 }
 
 impl<T: TableValue> TableOrd for Array<T> {
+    tbl_ord_delegate!(deref());
+}
+
+impl<T: TableValue> TableValue for Set<T> {
+    tbl_value_delegate!(deref());
+
+    fn type_name() -> String {
+        format!("Set<{}>", T::type_name())
+    }
+}
+impl<V: TableValue> TableItem for Set<V> {
+    tbl_item_delegate!(deref());
+}
+
+impl<T: TableValue> TableOrd for Set<T> {
+    tbl_ord_delegate!(deref());
+}
+
+impl<T: TableValue> TableValue for CompactSet<T> {
+    tbl_value_delegate!(deref());
+
+    fn type_name() -> String {
+        format!("CompactSet<{}>", T::type_name())
+    }
+}
+impl<V: TableValue> TableItem for CompactSet<V> {
+    tbl_item_delegate!(deref());
+}
+
+impl<T: TableValue> TableOrd for CompactSet<T> {
     tbl_ord_delegate!(deref());
 }
 

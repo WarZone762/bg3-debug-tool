@@ -1,13 +1,16 @@
 use game_object::GameObject;
 
-use super::table::TableItemCategory;
+use super::{
+    osiris_helpers::{add_spell, add_spell_boost, remove_spell, remove_spell_boost},
+    table::TableItemCategory,
+};
 use crate::{
+    err,
     game_definitions::{FixedString, SpellPrototype},
     globals::Globals,
-    info,
 };
 
-#[derive(GameObject, Clone)]
+#[derive(Clone, GameObject)]
 pub(crate) struct Spell {
     pub spell: &'static SpellPrototype,
     #[column(name = "ID", visible)]
@@ -30,18 +33,48 @@ impl From<(&FixedString, &'static SpellPrototype)> for Spell {
 
 #[derive(Default)]
 pub(crate) struct SpellCategory;
+
+impl SpellCategory {
+    fn draw_buttons(&self, ui: &imgui::Ui, item: &mut Spell) -> anyhow::Result<()> {
+        if let Some(name) = &item.name {
+            if ui.button("Add for Action") {
+                add_spell(name)?;
+            }
+            ui.same_line();
+            if ui.button("Remove for Action") {
+                remove_spell(name)?;
+            }
+            if ui.button("Add for Spell Slot") {
+                add_spell_boost(name)?;
+            }
+            ui.same_line();
+            if ui.button("Remove for Spell Slot") {
+                remove_spell_boost(name)?;
+            }
+        }
+        Ok(())
+    }
+}
+
 impl TableItemCategory for SpellCategory {
     type Item = Spell;
 
-    fn source() -> impl Iterator<Item = Self::Item> {
+    fn source() -> Option<impl Iterator<Item = Self::Item>> {
         let spell_manager = Globals::static_symbols().eoc__SpellPrototypeManager.unwrap();
-        spell_manager
-            .as_opt()
-            .and_then(|x| x.as_opt())
-            .filter(|x| x.initialized)
-            .into_iter()
-            .flat_map(|x| {
-                x.spells.iter().filter_map(|(name, spell)| Some((name, spell.as_opt()?).into()))
-            })
+        Some(
+            spell_manager
+                .as_opt()?
+                .as_opt()
+                .filter(|x| x.initialized)?
+                .spells
+                .iter()
+                .filter_map(|(name, spell)| Some((name, spell.as_opt()?).into())),
+        )
+    }
+
+    fn draw_actions(&mut self, ui: &imgui::Ui, item: &mut Self::Item) {
+        if let Err(e) = self.draw_buttons(ui, item) {
+            err!("failed to add spell: {e}");
+        }
     }
 }

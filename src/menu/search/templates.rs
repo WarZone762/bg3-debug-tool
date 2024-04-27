@@ -1,12 +1,10 @@
 use game_object::GameObject;
 use imgui::Ui;
 
-use super::{table::TableItemCategory, templates};
+use super::{osiris_helpers::give_item, table::TableItemCategory, templates};
 use crate::{
     err,
     game_definitions::{self as gd, GameObjectTemplate, ItemTemplate, SceneryTemplate},
-    osi_fn,
-    wrappers::osiris,
 };
 
 #[derive(Default)]
@@ -14,11 +12,11 @@ pub(crate) struct GameObjectTemplateCategory;
 impl TableItemCategory for GameObjectTemplateCategory {
     type Item = &'static GameObjectTemplate;
 
-    fn source() -> impl Iterator<Item = Self::Item> {
-        templates().filter_map(|x| match x {
+    fn source() -> Option<impl Iterator<Item = Self::Item>> {
+        Some(templates().filter_map(|x| match x {
             gd::Template::GameObject(x) => Some(x),
             _ => None,
-        })
+        }))
     }
 }
 
@@ -27,18 +25,18 @@ pub(crate) struct SceneryCategory;
 impl TableItemCategory for SceneryCategory {
     type Item = &'static SceneryTemplate;
 
-    fn source() -> impl Iterator<Item = Self::Item> {
-        templates().filter_map(|x| match x {
+    fn source() -> Option<impl Iterator<Item = Self::Item>> {
+        Some(templates().filter_map(|x| match x {
             gd::Template::Scenery(x) => Some(x),
             _ => None,
-        })
+        }))
     }
 }
 
 #[derive(GameObject)]
 pub(crate) struct Item {
     pub template: &'static ItemTemplate,
-    #[column(name = "GUID", visible)]
+    #[column(name = "GUID")]
     pub id: Option<&'static str>,
     #[column(name = "Internal Name", visible)]
     pub name: &'static str,
@@ -74,11 +72,11 @@ impl Default for ItemCategory {
 impl TableItemCategory for ItemCategory {
     type Item = Item;
 
-    fn source() -> impl Iterator<Item = Self::Item> {
-        templates().filter_map(|x| match x {
+    fn source() -> Option<impl Iterator<Item = Self::Item>> {
+        Some(templates().filter_map(|x| match x {
             gd::Template::Item(x) => Some(x.into()),
             _ => None,
-        })
+        }))
     }
 
     fn draw_actions(&mut self, ui: &Ui, item: &mut Self::Item) {
@@ -95,13 +93,4 @@ impl TableItemCategory for ItemCategory {
             }
         }
     }
-}
-
-fn give_item(uuid: &str, amount: i32) -> anyhow::Result<()> {
-    osi_fn!(TemplateAddTo, uuid, get_host_character()?, amount, 0)?;
-    Ok(())
-}
-
-fn get_host_character() -> anyhow::Result<osiris::Value> {
-    Ok(osi_fn!(GetHostCharacter)?.unwrap())
 }

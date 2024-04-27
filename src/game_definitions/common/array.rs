@@ -129,3 +129,34 @@ impl<'a, T> Iterator for ArrayIter<'a, T> {
         Some(v)
     }
 }
+
+#[derive(Debug)]
+#[repr(C)]
+pub(crate) struct Set<T> {
+    pub compact_set: CompactSet<T>,
+    pub capacity_increment_size: u64,
+}
+
+impl<T> Deref for Set<T> {
+    type Target = CompactSet<T>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.compact_set
+    }
+}
+
+#[derive(Debug)]
+#[repr(C)]
+pub(crate) struct CompactSet<T> {
+    pub buf: GamePtr<T>,
+    pub capacity: u32,
+    pub size: u32,
+}
+
+impl<T> Deref for CompactSet<T> {
+    type Target = [T];
+
+    fn deref(&self) -> &Self::Target {
+        unsafe { std::slice::from_raw_parts(self.buf.ptr, self.size as _) }
+    }
+}

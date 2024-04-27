@@ -21,7 +21,7 @@ use crate::{
     err,
     game_definitions::{
         FixedString, GamePtr, GlobalTemplateManager, LSStringView, SpellPrototypeManager,
-        TranslatedStringRepository,
+        StatusPrototypeManager, TranslatedStringRepository,
     },
     globals::Globals,
     warn,
@@ -268,7 +268,7 @@ static_symbols! {
     eoc__SpellPrototypeManager: GamePtr<GamePtr<SpellPrototypeManager>>,
     eoc__SpellPrototype__Init: fn(),
 
-    eoc__StatusPrototypeManager: *const (),
+    eoc__StatusPrototypeManager: GamePtr<GamePtr<StatusPrototypeManager>>,
     eoc__StatusPrototype__Init: fn(),
 
     eoc__PassiveManager: *const (),

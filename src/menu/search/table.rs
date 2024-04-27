@@ -35,18 +35,19 @@ impl<T: TableItemCategory> Default for ObjectTable<T> {
 }
 
 impl<T: TableItemCategory> ObjectTable<T> {
-    pub fn search(&mut self, string: &str, opts: &Options) {
+    pub fn search(&mut self, string: &str, opts: &Options) -> Option<()> {
         self.selected.take();
         self.items.clear();
-        let mut search = |string: &str, pred: fn(&str, &str) -> bool| {
-            self.items.extend(T::source().filter(|x| {
+        let mut search = |string: &str, pred: fn(&str, &str) -> bool| -> Option<()> {
+            self.items.extend(T::source()?.filter(|x| {
                 self.columns.iter().enumerate().filter(|(_, col)| col.included_in_search).any(
                     |(i, _)| {
                         pred(x.visit(&mut SearchVisitor, i).as_ref(), string)
                             && self.category.filter(x)
                     },
                 )
-            }))
+            }));
+            Some(())
         };
 
         if opts.case_sensitive {
@@ -54,7 +55,7 @@ impl<T: TableItemCategory> ObjectTable<T> {
         } else {
             let string = string.to_lowercase();
             search(&string, |text, string| text.to_lowercase().contains(string))
-        };
+        }
     }
 
     pub fn draw_table(&mut self, ui: &Ui) {
@@ -346,7 +347,7 @@ impl GameObjectVisitor for SearchVisitor {
 pub(crate) trait TableItemCategory: Default {
     type Item: ColumnsTableItem;
 
-    fn source() -> impl Iterator<Item = Self::Item>;
+    fn source() -> Option<impl Iterator<Item = Self::Item>>;
     fn filter(&self, _item: &Self::Item) -> bool {
         true
     }

@@ -5,13 +5,16 @@ use imgui::{TableFlags, Ui};
 use self::{
     functions::FunctionCategory,
     spells::SpellCategory,
+    statuses::StatusCategory,
     table::ObjectTable,
     templates::{GameObjectTemplateCategory, ItemCategory, SceneryCategory},
 };
 use crate::{game_definitions as gd, globals::Globals};
 
 mod functions;
+mod osiris_helpers;
 mod spells;
+mod statuses;
 pub(crate) mod table;
 pub(crate) mod table_value;
 mod templates;
@@ -21,9 +24,10 @@ macro_rules! choose_category {
         match $ident.cur_category {
             0 => $ident.items.$($tt)*,
             1 => $ident.spells.$($tt)*,
-            2 => $ident.functions.$($tt)*,
-            3 => $ident.templates.$($tt)*,
+            2 => $ident.statuses.$($tt)*,
+            3 => $ident.functions.$($tt)*,
             4 => $ident.scenery.$($tt)*,
+            5 => $ident.templates.$($tt)*,
             _ => unreachable!(),
         }
     };
@@ -31,28 +35,32 @@ macro_rules! choose_category {
 
 pub(crate) struct Search {
     reclaim_focus: bool,
+    search_failed: bool,
     cur_category: usize,
     text: String,
     options: Options,
-    functions: ObjectTable<FunctionCategory>,
     items: ObjectTable<ItemCategory>,
     spells: ObjectTable<SpellCategory>,
-    templates: ObjectTable<GameObjectTemplateCategory>,
+    statuses: ObjectTable<StatusCategory>,
+    functions: ObjectTable<FunctionCategory>,
     scenery: ObjectTable<SceneryCategory>,
+    templates: ObjectTable<GameObjectTemplateCategory>,
 }
 
 impl Default for Search {
     fn default() -> Self {
         Self {
             reclaim_focus: true,
+            search_failed: false,
             cur_category: 0,
             text: String::new(),
             options: Options::default(),
-            functions: ObjectTable::default(),
             items: ObjectTable::default(),
             spells: ObjectTable::default(),
-            templates: ObjectTable::default(),
+            statuses: ObjectTable::default(),
+            functions: ObjectTable::default(),
             scenery: ObjectTable::default(),
+            templates: ObjectTable::default(),
         }
     }
 }
@@ -69,7 +77,7 @@ impl Search {
         if ui.combo(
             "##object-category-combo",
             &mut self.cur_category,
-            &["Items", "Spells", "Osiris Functions", "Templates", "Scenery Templates"],
+            &["Items", "Spells", "Statuses", "Osiris Functions", "Scenery Templates", "Templates"],
             |x| Cow::from(*x),
         ) && self.text.is_empty()
             && cur_category!(items.len() == 0)
@@ -93,13 +101,7 @@ impl Search {
         ui.separator();
 
         ui.text("Search");
-        if self.cur_category == 2 {
-            ui.same_line();
-            ui.text_disabled("(?)");
-            if ui.is_item_hovered() {
-                ui.tooltip(|| ui.text("Only works when a save game is loaded"));
-            }
-        }
+
         if self.reclaim_focus {
             ui.set_keyboard_focus_here();
             self.reclaim_focus = false;
@@ -113,7 +115,10 @@ impl Search {
             self.search();
         }
 
-        if let Some(_body) = ui.begin_table_with_flags("body-tbl", 2, TableFlags::RESIZABLE) {
+        if self.search_failed {
+            ui.text("Failed to load items, try loading a save");
+        } else if let Some(_body) = ui.begin_table_with_flags("body-tbl", 2, TableFlags::RESIZABLE)
+        {
             ui.table_next_row();
             ui.table_set_column_index(0);
             cur_category!(draw_table(ui));
@@ -129,7 +134,7 @@ impl Search {
             };
         }
 
-        cur_category!(search(&self.text, &self.options));
+        self.search_failed = cur_category!(search(&self.text, &self.options)).is_none();
         self.reclaim_focus = true;
     }
 }

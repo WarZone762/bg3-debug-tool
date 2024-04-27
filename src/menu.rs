@@ -23,17 +23,16 @@ pub(crate) mod search;
 // - [x] ~~skip loading the Script Extender(DWrite.dll)~~ (works with SE
 //   somehow)
 // - [x] figure out Osiris value type names
-// - [ ] finish other categories
+// - [x] add more fields to objects
+// - [-] add ability to remove items, spells etc. from the character
+// - [-] add ability to export game data
+// - [-] finish other categories
 //   - [x] Osiris functions
-//   - [-] spells
+//   - [x] spells
+//   - [x] statuses
 //   - [ ] passives
-//   - [ ] conditions
-// - [ ] add more fields to objects
 // - [ ] finish info tab
-// - [ ] add ability to remove items, spells etc. from the character
 // - [ ] add regex search
-// - [ ] add ability to add/remove fields in object data
-// - [ ] add ability to export game data
 // - [ ] replace Win32 backend with SDL2
 // - [ ] ***add icons***
 
@@ -85,6 +84,7 @@ impl Menu {
                     .movable(false)
                     .position([0.0, 0.0], imgui::Condition::Always)
                     .build(|| {
+                        ui.set_window_font_scale(1.125);
                         ui.text("Press F11 to open the Debug Menu, F9 to hide this text");
                     });
             }
@@ -99,6 +99,8 @@ impl Menu {
             .size([viewport_size.x / 4.0, viewport_size.y / 4.0], imgui::Condition::FirstUseEver)
             .opened(&mut self.opened)
             .build(|| {
+                ui.set_window_font_scale(1.125);
+
                 if let Some(tab_bar) = ui.tab_bar("tab-bar") {
                     if let Some(item) = ui.tab_item("Game Data Explorer") {
                         self.search.render(ui);

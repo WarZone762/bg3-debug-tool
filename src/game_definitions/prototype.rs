@@ -2,7 +2,7 @@ use bitflags::bitflags;
 use game_object::{GameObject, TableValue};
 
 use super::{
-    Array, DamageType, DiceSizeId, FixedString, GamePtr, Guid, MultiHashMap, STDString,
+    Array, DamageType, DiceSizeId, FixedString, GamePtr, Guid, MultiHashMap, STDString, Set,
     TranslatedString,
 };
 
@@ -79,7 +79,7 @@ pub(crate) struct SpellPrototype {
     pub steer_speed_multiplier: f32,
 }
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, TableValue)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, TableValue)]
 #[repr(u8)]
 pub(crate) enum SpellType {
     Zone = 0x1,
@@ -200,4 +200,147 @@ pub(crate) struct UseCostGroup {
 pub(crate) struct UseCost {
     pub resource: Guid,
     pub amonut: f32,
+}
+
+#[derive(GameObject)]
+#[repr(C)]
+pub(crate) struct StatusPrototypeManager {
+    vptr: *const (),
+    pub statuses: MultiHashMap<FixedString, GamePtr<StatusPrototype>>,
+    pub unk: Array<FixedString>,
+    pub initialized: bool,
+}
+
+#[derive(GameObject)]
+#[repr(C)]
+pub(crate) struct StatusPrototype {
+    pub stats_object_index: i32,
+    pub status_id: StatusType,
+    pub status_name: FixedString,
+    pub status_property_flags: u64,
+    pub status_groups: u64,
+    pub description: DescriptionInfo,
+    pub stack_type: u32,
+    #[column(name = "LEDEffect")]
+    pub led_effect: u8,
+    pub tick_type: u8,
+    pub immune_flag: u32,
+    pub flags: u8,
+    pub absorb_surface_types: GamePtr<Set<SurfaceType>>,
+    pub boosts: Array<Guid>,
+    pub remove_events: u32,
+    pub sound_start: Array<FixedString>,
+    pub sound_loop: Array<FixedString>,
+    pub sound_stop: Array<FixedString>,
+    pub hit_animation_type: u8,
+    pub sheathing: u8,
+    pub aura_flags: u8,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, TableValue)]
+#[repr(u32)]
+#[allow(non_camel_case_types, clippy::upper_case_acronyms)]
+pub(crate) enum StatusType {
+    DYING = 1,
+    HEAL = 2,
+    KNOCKED_DOWN = 3,
+    TELEPORT_FALLING = 4,
+    BOOST = 5,
+    REACTION = 6,
+    STORY_FROZEN = 7,
+    SNEAKING = 8,
+    UNLOCK = 9,
+    FEAR = 10,
+    SMELLY = 11,
+    INVISIBLE = 12,
+    ROTATE = 13,
+    MATERIAL = 14,
+    CLIMBING = 15,
+    INCAPACITATED = 16,
+    INSURFACE = 17,
+    POLYMORPHED = 18,
+    EFFECT = 19,
+    DEACTIVATED = 20,
+    DOWNED = 21,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, TableValue)]
+#[repr(u8)]
+pub(crate) enum SurfaceType {
+    None = 0,
+    Water = 1,
+    WaterElectrified = 2,
+    WaterFrozen = 3,
+    Blood = 4,
+    BloodElectrified = 5,
+    BloodFrozen = 6,
+    Poison = 7,
+    Oil = 8,
+    Lava = 9,
+    Grease = 10,
+    WyvernPoison = 11,
+    Web = 12,
+    Deepwater = 13,
+    Vines = 14,
+    Fire = 15,
+    Acid = 16,
+    TrialFire = 17,
+    BlackPowder = 18,
+    ShadowCursedVines = 19,
+    AlienOil = 20,
+    Mud = 21,
+    Alcohol = 22,
+    InvisibleWeb = 23,
+    BloodSilver = 24,
+    Chasm = 25,
+    Hellfire = 26,
+    CausticBrine = 27,
+    BloodExploding = 28,
+    Ash = 29,
+    SpikeGrowth = 30,
+    HolyFire = 31,
+    BlackTentacles = 32,
+    Overgrowth = 33,
+    PurpleWormPoison = 34,
+    SerpentVenom = 35,
+    InvisibleGithAcid = 36,
+    BladeBarrier = 37,
+    Sewer = 38,
+    WaterCloud = 39,
+    WaterCloudElectrified = 40,
+    PoisonCloud = 41,
+    ExplosionCloud = 42,
+    ShockwaveCloud = 43,
+    CloudkillCloud = 44,
+    MaliceCloud = 45,
+    BloodCloud = 46,
+    StinkingCloud = 47,
+    DarknessCloud = 48,
+    FogCloud = 49,
+    GithPheromoneGasCloud = 50,
+    SporeWhiteCloud = 51,
+    SporeGreenCloud = 52,
+    SporeBlackCloud = 53,
+    DrowPoisonCloud = 54,
+    IceCloud = 55,
+    PotionHealingCloud = 56,
+    PotionHealingGreaterCloud = 57,
+    PotionHealingSuperiorCloud = 58,
+    PotionHealingSupremeCloud = 59,
+    PotionInvisibilityCloud = 60,
+    PotionSpeedCloud = 61,
+    PotionVitalityCloud = 62,
+    PotionAntitoxinCloud = 63,
+    PotionResistanceAcidCloud = 64,
+    PotionResistanceColdCloud = 65,
+    PotionResistanceFireCloud = 66,
+    PotionResistanceForceCloud = 67,
+    PotionResistanceLightningCloud = 68,
+    PotionResistancePoisonCloud = 69,
+    SporePinkCloud = 70,
+    BlackPowderDetonationCloud = 71,
+    VoidCloud = 72,
+    CrawlerMucusCloud = 73,
+    Cloudkill6Cloud = 74,
+    Sentinel = 75,
 }
