@@ -115,28 +115,8 @@ impl Debug for OsiArgumentValue {
             ValueType::Integer => unsafe { format!("Integer({})", self.value.int32) },
             ValueType::Integer64 => unsafe { format!("Integer64({})", self.value.int64) },
             ValueType::Real => unsafe { format!("Real({})", self.value.float) },
-            ValueType::String => unsafe {
-                format!("String({})", CStr::from_ptr(self.value.string as _).to_str().unwrap())
-            },
-            ValueType::GuidString => unsafe {
-                format!("GuidString({})", CStr::from_ptr(self.value.string as _).to_str().unwrap())
-            },
-            ValueType::CharacterGuid => unsafe {
-                format!(
-                    "CharacterGuid({})",
-                    CStr::from_ptr(self.value.string as _).to_str().unwrap()
-                )
-            },
-            ValueType::ItemGuid => unsafe {
-                format!("ItemGuid({})", CStr::from_ptr(self.value.string as _).to_str().unwrap())
-            },
-            ValueType::Undefined => "Undefined".into(),
             x => unsafe {
-                format!(
-                    "Unknown{}({})",
-                    x as u16,
-                    CStr::from_ptr(self.value.string as _).to_str().unwrap()
-                )
+                format!("{x:?}({})", CStr::from_ptr(self.value.string as _).to_str().unwrap())
             },
         };
 
@@ -188,40 +168,8 @@ impl OsiArgumentValue {
         Self { value: OsiArgumentValueUnion { float }, type_id: ValueType::Real, unknown: false }
     }
 
-    pub fn string(string: *const i8) -> Self {
-        Self { value: OsiArgumentValueUnion { string }, type_id: ValueType::String, unknown: false }
-    }
-
-    pub fn guid_string(string: *const i8) -> Self {
-        Self {
-            value: OsiArgumentValueUnion { string },
-            type_id: ValueType::GuidString,
-            unknown: false,
-        }
-    }
-
-    pub fn character_guid(string: *const i8) -> Self {
-        Self {
-            value: OsiArgumentValueUnion { string },
-            type_id: ValueType::CharacterGuid,
-            unknown: false,
-        }
-    }
-
-    pub fn item_guid(string: *const i8) -> Self {
-        Self {
-            value: OsiArgumentValueUnion { string },
-            type_id: ValueType::ItemGuid,
-            unknown: false,
-        }
-    }
-
-    pub fn unknown21(string: *const i8) -> Self {
-        Self {
-            value: OsiArgumentValueUnion { string },
-            type_id: ValueType::Unknown21,
-            unknown: false,
-        }
+    pub fn string(string: *const i8, type_id: ValueType) -> Self {
+        Self { value: OsiArgumentValueUnion { string }, type_id, unknown: false }
     }
 
     pub fn undefined() -> Self {
@@ -254,44 +202,44 @@ pub(crate) enum ValueType {
     Real = 3,
     String = 4,
     GuidString = 5,
-    CharacterGuid = 6,
-    ItemGuid = 7,
-    Unknown8 = 8,
-    Unknown9 = 9,
-    Unknown10 = 10,
-    Unknown11 = 11,
-    Unknown12 = 12,
-    Unknown13 = 13,
-    Unknown14 = 14,
-    Unknown15 = 15,
-    Unknown16 = 16,
-    Unknown17 = 17,
-    Unknown18 = 18,
-    Unknown19 = 19,
-    Unknown20 = 20,
-    Unknown21 = 21,
-    Unknown22 = 22,
-    Unknown23 = 23,
-    Unknown24 = 24,
-    Unknown25 = 25,
-    Unknown26 = 26,
-    Unknown27 = 27,
-    Unknown28 = 28,
-    Unknown29 = 29,
-    Unknown30 = 30,
-    Unknown31 = 31,
-    Unknown32 = 32,
-    Unknown33 = 33,
-    Unknown34 = 34,
-    Unknown35 = 35,
-    Unknown36 = 36,
-    Unknown37 = 37,
-    Unknown38 = 38,
-    Unknown39 = 39,
-    Unknown40 = 40,
-    Unknown41 = 41,
-    Unknown42 = 42,
-    Unknown43 = 43,
+    Character = 6,
+    Item = 7,
+    Trigger = 8,
+    Spline = 9,
+    LevelTemplate = 10,
+    DialogResource = 11,
+    EffectResource = 12,
+    VoiceBarkResource = 13,
+    Animation = 14,
+    Tag = 15,
+    Flag = 16,
+    Faction = 17,
+    TimelineResource = 18,
+    Root = 19,
+    CharacterRoot = 20,
+    ItemRoot = 21,
+    Platform = 22,
+    DisturbanceProperty = 23,
+    ShapeshiftRule = 24,
+    DifficultyClass = 25,
+    DeathType = 26,
+    GravityType = 27,
+    GoldReward = 28,
+    LQuant = 29,
+    TutorialEvent = 30,
+    TagCategory = 31,
+    Dlc = 32,
+    RulesetModifier = 33,
+    ArmorSet = 34,
+    CrowdBehaviour = 35,
+    SplatterType = 36,
+    Quantity = 37,
+    TradableType = 38,
+    UnifiedTutorial = 39,
+    EquipmentSlot = 40,
+    UnsheathState = 41,
+    CriticalityType = 42,
+    TradeMode = 43,
     Undefined = 0x7F,
 }
 
@@ -304,44 +252,44 @@ impl From<u16> for ValueType {
             3 => Self::Real,
             4 => Self::String,
             5 => Self::GuidString,
-            6 => Self::CharacterGuid,
-            7 => Self::ItemGuid,
-            8 => Self::Unknown8,
-            9 => Self::Unknown9,
-            10 => Self::Unknown10,
-            11 => Self::Unknown11,
-            12 => Self::Unknown12,
-            13 => Self::Unknown13,
-            14 => Self::Unknown14,
-            15 => Self::Unknown15,
-            16 => Self::Unknown16,
-            17 => Self::Unknown17,
-            18 => Self::Unknown18,
-            19 => Self::Unknown19,
-            20 => Self::Unknown20,
-            21 => Self::Unknown21,
-            22 => Self::Unknown22,
-            23 => Self::Unknown23,
-            24 => Self::Unknown24,
-            25 => Self::Unknown25,
-            26 => Self::Unknown26,
-            27 => Self::Unknown27,
-            28 => Self::Unknown28,
-            29 => Self::Unknown29,
-            30 => Self::Unknown30,
-            31 => Self::Unknown31,
-            32 => Self::Unknown32,
-            33 => Self::Unknown33,
-            34 => Self::Unknown34,
-            35 => Self::Unknown35,
-            36 => Self::Unknown36,
-            37 => Self::Unknown37,
-            38 => Self::Unknown38,
-            39 => Self::Unknown39,
-            40 => Self::Unknown40,
-            41 => Self::Unknown41,
-            42 => Self::Unknown42,
-            43 => Self::Unknown43,
+            6 => Self::Character,
+            7 => Self::Item,
+            8 => Self::Trigger,
+            9 => Self::Spline,
+            10 => Self::LevelTemplate,
+            11 => Self::DialogResource,
+            12 => Self::EffectResource,
+            13 => Self::VoiceBarkResource,
+            14 => Self::Animation,
+            15 => Self::Tag,
+            16 => Self::Flag,
+            17 => Self::Faction,
+            18 => Self::TimelineResource,
+            19 => Self::Root,
+            20 => Self::CharacterRoot,
+            21 => Self::ItemRoot,
+            22 => Self::Platform,
+            23 => Self::DisturbanceProperty,
+            24 => Self::ShapeshiftRule,
+            25 => Self::DifficultyClass,
+            26 => Self::DeathType,
+            27 => Self::GravityType,
+            28 => Self::GoldReward,
+            29 => Self::LQuant,
+            30 => Self::TutorialEvent,
+            31 => Self::TagCategory,
+            32 => Self::Dlc,
+            33 => Self::RulesetModifier,
+            34 => Self::ArmorSet,
+            35 => Self::CrowdBehaviour,
+            36 => Self::SplatterType,
+            37 => Self::Quantity,
+            38 => Self::TradableType,
+            39 => Self::UnifiedTutorial,
+            40 => Self::EquipmentSlot,
+            41 => Self::UnsheathState,
+            42 => Self::CriticalityType,
+            43 => Self::TradeMode,
             0x7F => Self::Undefined,
             x => {
                 warn!("unknown Osiris function type {x}");

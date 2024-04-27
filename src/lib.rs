@@ -1,4 +1,5 @@
-#![feature(let_chains, unboxed_closures, fn_traits)]
+#![feature(let_chains, unboxed_closures, fn_traits, min_specialization, debug_closure_helpers)]
+#![allow(clippy::missing_transmute_annotations)]
 
 mod binary_mappings;
 mod game_definitions;

@@ -1,4 +1,5 @@
 use bitflags::bitflags;
+use game_object::{GameObject, TableValue};
 
 use super::{
     Array, DamageType, DiceSizeId, FixedString, GamePtr, Guid, MultiHashMap, STDString,
@@ -15,7 +16,7 @@ pub(crate) struct SpellPrototypeManager {
     pub initialized: bool,
 }
 
-#[derive(Debug)]
+#[derive(GameObject)]
 #[repr(C)]
 pub(crate) struct SpellPrototype {
     pub stats_object_index: i32,
@@ -78,7 +79,7 @@ pub(crate) struct SpellPrototype {
     pub steer_speed_multiplier: f32,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, TableValue)]
 #[repr(u8)]
 pub(crate) enum SpellType {
     Zone = 0x1,
@@ -95,7 +96,7 @@ pub(crate) enum SpellType {
 }
 
 bitflags! {
-    #[derive(Debug)]
+    #[derive(GameObject)]
     pub(crate) struct SpellFlags: u64 {
         const HasVerbalComponent = 0x1;
         const HasSomaticComponent = 0x2;
@@ -156,7 +157,7 @@ bitflags! {
     }
 }
 
-#[derive(Debug)]
+#[derive(GameObject)]
 #[repr(C)]
 pub(crate) struct DescriptionInfo {
     pub display_name: TranslatedString,
@@ -170,7 +171,7 @@ pub(crate) struct DescriptionInfo {
     pub lore_description: TranslatedString,
 }
 
-#[derive(Debug)]
+#[derive(GameObject)]
 #[repr(C)]
 pub(crate) struct Animation {
     pub part_0: [FixedString; 3],
@@ -185,7 +186,7 @@ pub(crate) struct Animation {
     pub flags: u8,
 }
 
-#[derive(Debug)]
+#[derive(GameObject)]
 #[repr(C)]
 pub(crate) struct UseCostGroup {
     pub resources: Array<Guid>,
@@ -194,7 +195,7 @@ pub(crate) struct UseCostGroup {
     pub resource_group: Guid,
 }
 
-#[derive(Debug)]
+#[derive(GameObject)]
 #[repr(C)]
 pub(crate) struct UseCost {
     pub resource: Guid,

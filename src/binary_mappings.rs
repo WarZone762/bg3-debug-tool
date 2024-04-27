@@ -322,9 +322,19 @@ static_symbols! {
     Kernel_FindFirstFileW: fn(),
     Kernel_FindNextFileW: fn(),
     Kernel_FindClose: fn(),
+
+    eoc__InterruptPrototypeManager: *const(),
+    eoc__PassivePrototype__Init: fn(),
+    eoc__PassivePrototypeManager: *const(),
+    eoc__InterruptPrototype__Init: fn(),
+    Noesis__SymbolManager__Buf1: *const(),
+    Noesis__gReflection: *const(),
+    Noesis__GUI__LoadXaml: fn(),
+    Noesis__Visual__RemoveVisualChild: fn(),
+    Noesis__Visual__AddVisualChild: fn(),
+    ls__UIStateMachine__FireStateEvent2: *const(),
 }
 
-// TODO: check all magic numbers
 unsafe fn asm_resolve_instruction_ref(insn: *const u8) -> Option<*const u8> {
     Some(match (*insn, *(insn.add(1)), *(insn.add(2))) {
         // Call (4b operand) instruction

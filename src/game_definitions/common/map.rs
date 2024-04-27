@@ -58,8 +58,8 @@ impl<K, V> Iterator for MapIter<'_, K, V> {
 #[derive(Debug)]
 #[repr(C)]
 pub(crate) struct MultiHashMap<TKey: GameHash + Eq, TValue> {
-    hash_set: MultiHashSet<TKey>,
-    values: UninitializedStaticArray<TValue>,
+    pub hash_set: MultiHashSet<TKey>,
+    pub values: UninitializedStaticArray<TValue>,
 }
 
 impl<TKey: GameHash + Eq, TValue> MultiHashMap<TKey, TValue> {
@@ -72,17 +72,21 @@ impl<TKey: GameHash + Eq, TValue> MultiHashMap<TKey, TValue> {
         self.hash_set.find_index(key)
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = &TValue> {
-        self.values.iter()
+    pub fn iter(&self) -> impl Iterator<Item = (&TKey, &TValue)> {
+        self.hash_set.keys.iter().zip(self.values.iter())
+    }
+
+    pub fn entries(&self) -> impl Iterator<Item = (&TKey, &TValue)> {
+        self.hash_set.iter_indecies().map(|x| (&self.hash_set.keys[x], &self.values[x]))
     }
 }
 
 #[derive(Debug)]
 #[repr(C)]
 pub(crate) struct MultiHashSet<T: GameHash + Eq> {
-    hash_keys: StaticArray<i32>,
-    next_ids: Array<i32>,
-    keys: Array<T>,
+    pub hash_keys: StaticArray<i32>,
+    pub next_ids: Array<i32>,
+    pub keys: Array<T>,
 }
 
 impl<T: GameHash + Eq> MultiHashSet<T> {
@@ -99,6 +103,14 @@ impl<T: GameHash + Eq> MultiHashSet<T> {
             key_index = self.next_ids[key_index as u32];
         }
         None
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &T> {
+        self.iter_indecies().map(|x| &self.keys[x])
+    }
+
+    pub fn iter_indecies(&self) -> impl Iterator<Item = u32> + '_ {
+        self.hash_keys.iter().filter(|x| **x >= 0).map(|x| *x as u32)
     }
 }
 

@@ -1,4 +1,6 @@
-#[derive(Debug)]
+use game_object::TableValue;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, TableValue)]
 #[repr(u8)]
 pub(crate) enum DiceSizeId {
     D4 = 0,
@@ -11,7 +13,7 @@ pub(crate) enum DiceSizeId {
     Default = 8,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, TableValue)]
 #[repr(u8)]
 pub(crate) enum DamageType {
     None = 0,

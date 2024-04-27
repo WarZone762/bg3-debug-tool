@@ -1,6 +1,9 @@
 use imgui::Ui;
 
-use super::{TableColumn, TableItem, TableItemCategory};
+use super::{
+    table::{ColumnsTableItem, TableColumn, TableItem, TableItemCategory},
+    table_value::{GameObjectFullVisitor, GameObjectParallelVisitor, GameObjectVisitor},
+};
 use crate::{
     game_definitions::{self, OsiStr, ValueType},
     globals::Globals,
@@ -35,33 +38,64 @@ impl Function {
     }
 }
 
-impl TableItem for Function {
+impl ColumnsTableItem for Function {
     fn columns() -> Box<[TableColumn]> {
         Box::new([TableColumn::new("Signature", true, true), TableColumn::new("Type", true, true)])
     }
 
-    fn draw(&self, ui: &Ui, i: usize) {
+    fn visit_parallel<T: GameObjectParallelVisitor>(
+        &self,
+        visitor: &mut T,
+        other: &Self,
+        i: usize,
+    ) -> T::Return {
         match i {
-            0 => ui.text_wrapped(if let Some(ret) = &self.ret_type {
+            0 => visitor.visit_parallel("Signature", &self.name, &other.name),
+            1 => {
+                visitor.visit_parallel("Type", &self.r#type.to_string(), &other.r#type.to_string())
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
+impl TableItem for Function {
+    fn visit<T: GameObjectVisitor>(&self, visitor: &mut T, i: usize) -> T::Return {
+        match i {
+            0 => visitor.visit(
+                "Signature",
+                &if let Some(ret) = &self.ret_type {
+                    format!("{}({}) -> {ret}", self.name, self.args.join(", "))
+                } else {
+                    format!("{}({})", self.name, self.args.join(", "))
+                },
+            ),
+            1 => visitor.visit("Type", &self.r#type.to_string()),
+            _ => unreachable!(),
+        }
+    }
+
+    fn visit_field<T: GameObjectVisitor>(&self, visitor: &mut T, name: &str) -> Option<T::Return> {
+        unimplemented!()
+    }
+
+    fn visit_all<T: GameObjectFullVisitor>(&self, mut visitor: T) -> T::Finish {
+        visitor.visit(
+            "Signature",
+            &if let Some(ret) = &self.ret_type {
                 format!("{}({}) -> {ret}", self.name, self.args.join(", "))
             } else {
                 format!("{}({})", self.name, self.args.join(", "))
-            }),
-            1 => ui.text_wrapped(self.r#type.to_string()),
-            _ => unreachable!(),
+            },
+        );
+        visitor.visit("Type", &self.r#type.to_string());
+        for (i, arg) in self.args.iter().enumerate() {
+            visitor.visit(format!("Arg {i}"), arg);
         }
-    }
-
-    fn search_str(&self, i: usize) -> String {
-        match i {
-            0 => self.name.clone(),
-            1 => self.r#type.to_string(),
-            _ => unreachable!(),
+        if let Some(ret) = &self.ret_type {
+            visitor.visit("Return Type", ret);
         }
-    }
-
-    fn compare(&self, other: &Self, i: usize) -> std::cmp::Ordering {
-        self.search_str(i).cmp(&other.search_str(i))
+        visitor.finish()
     }
 }
 

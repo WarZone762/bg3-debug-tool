@@ -339,11 +339,46 @@ impl Value {
                 _ => return None,
             },
             Value::String(x) => match r#type {
-                ValueType::String => OsiArgumentValue::string(x.as_ptr()),
-                ValueType::GuidString => OsiArgumentValue::guid_string(x.as_ptr()),
-                ValueType::CharacterGuid => OsiArgumentValue::character_guid(x.as_ptr()),
-                ValueType::ItemGuid => OsiArgumentValue::item_guid(x.as_ptr()),
-                ValueType::Unknown21 => OsiArgumentValue::unknown21(x.as_ptr()),
+                ValueType::String
+                | ValueType::GuidString
+                | ValueType::Character
+                | ValueType::Item
+                | ValueType::Trigger
+                | ValueType::Spline
+                | ValueType::LevelTemplate
+                | ValueType::DialogResource
+                | ValueType::EffectResource
+                | ValueType::VoiceBarkResource
+                | ValueType::Animation
+                | ValueType::Tag
+                | ValueType::Flag
+                | ValueType::Faction
+                | ValueType::TimelineResource
+                | ValueType::Root
+                | ValueType::CharacterRoot
+                | ValueType::ItemRoot
+                | ValueType::Platform
+                | ValueType::DisturbanceProperty
+                | ValueType::ShapeshiftRule
+                | ValueType::DifficultyClass
+                | ValueType::DeathType
+                | ValueType::GravityType
+                | ValueType::GoldReward
+                | ValueType::LQuant
+                | ValueType::TutorialEvent
+                | ValueType::TagCategory
+                | ValueType::Dlc
+                | ValueType::RulesetModifier
+                | ValueType::ArmorSet
+                | ValueType::CrowdBehaviour
+                | ValueType::SplatterType
+                | ValueType::Quantity
+                | ValueType::TradableType
+                | ValueType::UnifiedTutorial
+                | ValueType::EquipmentSlot
+                | ValueType::UnsheathState
+                | ValueType::CriticalityType
+                | ValueType::TradeMode => OsiArgumentValue::string(x.as_ptr(), r#type),
                 _ => return None,
             },
         })

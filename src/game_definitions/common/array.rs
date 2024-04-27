@@ -1,4 +1,7 @@
-use std::{marker::PhantomData, ops::Index};
+use std::{
+    marker::PhantomData,
+    ops::{Deref, Index},
+};
 
 use super::GamePtr;
 
@@ -8,6 +11,14 @@ pub(crate) struct Array<T> {
     pub buf: GamePtr<T>,
     pub capacity: u32,
     pub size: u32,
+}
+
+impl<T> Deref for Array<T> {
+    type Target = [T];
+
+    fn deref(&self) -> &Self::Target {
+        unsafe { std::slice::from_raw_parts(self.buf.ptr, self.size as _) }
+    }
 }
 
 impl<T> Index<u32> for Array<T> {
@@ -30,6 +41,14 @@ impl<T> Index<u32> for Array<T> {
 pub(crate) struct StaticArray<T> {
     pub buf: GamePtr<T>,
     pub size: u32,
+}
+
+impl<T> Deref for StaticArray<T> {
+    type Target = [T];
+
+    fn deref(&self) -> &Self::Target {
+        unsafe { std::slice::from_raw_parts(self.buf.ptr, self.size as _) }
+    }
 }
 
 impl<T> Index<u32> for StaticArray<T> {

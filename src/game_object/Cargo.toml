@@ -6,13 +6,6 @@ edition = "2021"
 [lib]
 proc-macro = true
 
-[profile.dev]
-panic = "abort"
-
-[profile.release]
-lto = "fat"
-panic = "abort"
-
 [dependencies]
 anyhow = "1.0"
 syn = { version = "2.0", features = ["extra-traits", "full"] }

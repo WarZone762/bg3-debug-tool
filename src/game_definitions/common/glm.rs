@@ -1,16 +1,18 @@
-#[derive(Debug)]
+use game_object::GameObject;
+
+#[derive(GameObject)]
 #[repr(C)]
 pub(crate) struct Vec3 {
-    x: f32,
-    y: f32,
-    z: f32,
+    pub x: f32,
+    pub y: f32,
+    pub z: f32,
 }
 
-#[derive(Debug)]
+#[derive(GameObject)]
 #[repr(C)]
 pub(crate) struct Quat {
-    w: f32,
-    x: f32,
-    y: f32,
-    z: f32,
+    pub w: f32,
+    pub x: f32,
+    pub y: f32,
+    pub z: f32,
 }

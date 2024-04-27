@@ -22,6 +22,7 @@ pub(crate) mod search;
 // - [x] add DX11 hooks
 // - [x] ~~skip loading the Script Extender(DWrite.dll)~~ (works with SE
 //   somehow)
+// - [x] figure out Osiris value type names
 // - [ ] finish other categories
 //   - [x] Osiris functions
 //   - [-] spells
@@ -31,7 +32,6 @@ pub(crate) mod search;
 // - [ ] finish info tab
 // - [ ] add ability to remove items, spells etc. from the character
 // - [ ] add regex search
-// - [ ] figure out Osiris value type names
 // - [ ] add ability to add/remove fields in object data
 // - [ ] add ability to export game data
 // - [ ] replace Win32 backend with SDL2

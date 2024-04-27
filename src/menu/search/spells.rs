@@ -1,44 +1,47 @@
-use crate::game_definitions::SpellPrototype;
+use game_object::GameObject;
 
-#[derive(Debug, Clone)]
+use super::table::TableItemCategory;
+use crate::{
+    game_definitions::{FixedString, SpellPrototype},
+    globals::Globals,
+    info,
+};
+
+#[derive(GameObject, Clone)]
 pub(crate) struct Spell {
-    display_name: Option<String>,
-    desc: Option<String>,
+    pub spell: &'static SpellPrototype,
+    #[column(name = "ID", visible)]
+    pub name: Option<String>,
+    #[column(name = "Name", visible)]
+    pub display_name: Option<String>,
+    #[column(name = "Description", visible)]
+    pub desc: Option<String>,
 }
 
-impl From<&SpellPrototype> for Spell {
-    fn from(value: &SpellPrototype) -> Self {
-        let display_name = value.description.display_name.try_into().ok();
-        let desc = value.description.description.try_into().ok();
+impl From<(&FixedString, &'static SpellPrototype)> for Spell {
+    fn from(value: (&FixedString, &'static SpellPrototype)) -> Self {
+        let name = value.0.get().map(|x| x.to_string());
+        let display_name = value.1.description.display_name.try_into().ok();
+        let desc = value.1.description.description.try_into().ok();
 
-        Self { display_name, desc }
+        Self { spell: value.1, name, display_name, desc }
     }
 }
 
-// impl ObjectTableItem for Spell {
-//     type ActionMenu = ();
-//     type Options = ();
-//
-//     fn fields() -> Box<[Box<dyn super::TableValueGetter<Self>>]> {
-//         Box::new([
-//             ObjectField::define(
-//                 "Display Name",
-//                 true,
-//                 true,
-//                 for<'a> |x: &'a Self| -> Option<&'a str> {
-// x.display_name.as_deref() },             ),
-//             ObjectField::define(
-//                 "Description",
-//                 true,
-//                 false,
-//                 for<'a> |x: &'a Self| -> Option<&'a str> { x.desc.as_deref()
-// },             ),
-//         ])
-//     }
-//
-//     // fn source() -> impl Iterator<Item = Self> {
-//     //     let spell_manager =
-//     // *Globals::static_symbols().eoc__SpellPrototypeManager.unwrap();
-//     //     spell_manager.as_ref().spells.iter().map(|x| x.as_ref().into())
-//     // }
-// }
+#[derive(Default)]
+pub(crate) struct SpellCategory;
+impl TableItemCategory for SpellCategory {
+    type Item = Spell;
+
+    fn source() -> impl Iterator<Item = Self::Item> {
+        let spell_manager = Globals::static_symbols().eoc__SpellPrototypeManager.unwrap();
+        spell_manager
+            .as_opt()
+            .and_then(|x| x.as_opt())
+            .filter(|x| x.initialized)
+            .into_iter()
+            .flat_map(|x| {
+                x.spells.iter().filter_map(|(name, spell)| Some((name, spell.as_opt()?).into()))
+            })
+    }
+}

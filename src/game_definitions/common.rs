@@ -9,15 +9,16 @@ mod map;
 mod string;
 
 pub(crate) use array::*;
+use game_object::GameObject;
 pub(crate) use map::*;
 pub(crate) use string::*;
 
-#[derive(Debug)]
+#[derive(GameObject)]
 #[repr(C)]
 pub(crate) struct Transform {
-    rotation_quat: glm::Quat,
-    translate: glm::Vec3,
-    scale: glm::Vec3,
+    pub rotation_quat: glm::Quat,
+    pub translate: glm::Vec3,
+    pub scale: glm::Vec3,
 }
 
 #[derive(Debug)]
@@ -160,5 +161,12 @@ impl<T> GamePtr<T> {
 
     pub fn as_ref<'a>(self) -> &'a T {
         unsafe { &*self.ptr }
+    }
+
+    pub fn as_opt<'a>(self) -> Option<&'a T> {
+        if self.is_null() {
+            return None;
+        }
+        Some(self.as_ref())
     }
 }

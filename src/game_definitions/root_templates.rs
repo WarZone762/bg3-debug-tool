@@ -82,25 +82,21 @@ impl<'a> From<&'a GameObjectTemplate> for Template<'a> {
     }
 }
 
-#[derive(Debug, GameObject)]
+#[derive(GameObject)]
 #[repr(C)]
 pub(crate) struct GameObjectTemplate {
-    #[skip]
-    pub vptr: GamePtr<GameObjectTemplateVMT>,
+    vptr: GamePtr<GameObjectTemplateVMT>,
     field_8: u64,
     pub id: FixedString,
-    #[default_shown]
+    #[column(visible, include_in_search)]
     pub template_name: FixedString,
     pub parent_template_id: FixedString,
-    #[default_shown]
+    #[column(visible, include_in_search)]
     pub name: STDString,
     pub group_id: OverrideableProperty<u32>,
     pub level_name: FixedString,
-    #[skip]
     pad: [u8; 4],
-    #[skip]
     pub camera_offset: OverrideableProperty<glm::Vec3>,
-    #[skip]
     pub transform: OverrideableProperty<Transform>,
     pub visual_template: OverrideableProperty<FixedString>,
     pub physics_template: OverrideableProperty<FixedString>,
@@ -113,7 +109,6 @@ pub(crate) struct GameObjectTemplate {
     pub global_deleted_flag: u8,
     pub render_channel: OverrideableProperty<u8>,
     pub parent_template_flags: u8,
-    #[default_shown]
     pub file_name: STDString,
 }
 
@@ -141,7 +136,7 @@ pub(crate) struct GameObjectTemplateVMT {
     get_real_type: fn(GamePtr<GameObjectTemplate>) -> GamePtr<FixedString>,
 }
 
-#[derive(Debug)]
+#[derive(GameObject)]
 #[repr(C)]
 pub(crate) struct EoCGameObjectTemplate {
     pub base: GameObjectTemplate,
@@ -163,7 +158,13 @@ impl Deref for EoCGameObjectTemplate {
     }
 }
 
-#[derive(Debug)]
+impl EoCGameObjectTemplate {
+    fn display_name(&self) -> &TranslatedString {
+        &self.display_name
+    }
+}
+
+#[derive(GameObject)]
 #[repr(C)]
 pub(crate) struct AIBound {
     pub r#type: i32,
@@ -177,9 +178,10 @@ pub(crate) struct AIBound {
     field_2a: u8,
 }
 
-#[derive(Debug)]
+#[derive(GameObject)]
 #[repr(C)]
 pub(crate) struct SceneryTemplate {
+    #[column(visible)]
     pub base: EoCGameObjectTemplate,
     pub cover_amount: OverrideableProperty<bool>,
     pub can_climb_on: OverrideableProperty<bool>,
@@ -212,9 +214,10 @@ impl Deref for SceneryTemplate {
     }
 }
 
-#[derive(Debug)]
+#[derive(GameObject)]
 #[repr(C)]
 pub(crate) struct ItemTemplate {
+    #[column(visible)]
     pub base: SceneryTemplate,
     pub combat_component: CombatComponentTemplate,
     pub inventory_list: OverrideableProperty<Array<FixedString>>,
@@ -294,10 +297,12 @@ pub(crate) struct ItemTemplate {
     pub short_description: OverrideableProperty<TranslatedString>,
     pub technical_description_params: OverrideableProperty<STDString>,
     pub short_description_params: OverrideableProperty<STDString>,
+    pub unknown_description: OverrideableProperty<TranslatedString>,
     pub permanent_warnings: OverrideableProperty<FixedString>,
     pub container_auto_add_on_pickup: OverrideableProperty<bool>,
     pub container_content_filter_condition: OverrideableProperty<STDString>,
     pub interation_filter_list: GamePtr<MultiHashSet<Guid>>,
+    // pub interation_filter_list: u64,
     pub interaction_filter_type: OverrideableProperty<u8>,
     pub interaction_filter_requirement: OverrideableProperty<u8>,
     pub active_group_id: OverrideableProperty<FixedString>,
@@ -324,7 +329,7 @@ impl Deref for ItemTemplate {
     }
 }
 
-#[derive(Debug)]
+#[derive(GameObject)]
 #[repr(C)]
 pub(crate) struct EquipmentData {
     pub short_hair: MultiHashMap<Guid, FixedString>,
@@ -346,7 +351,7 @@ pub(crate) struct EquipmentData {
     slot_junk: *const (),
 }
 
-#[derive(Debug)]
+#[derive(GameObject)]
 #[repr(C)]
 pub(crate) struct CombatComponentTemplate {
     vptr: *const (),

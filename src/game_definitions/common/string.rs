@@ -124,10 +124,10 @@ impl From<LSStringView<'_>> for String {
     }
 }
 
-impl Deref for LSStringView<'_> {
+impl<'a> Deref for LSStringView<'a> {
     type Target = str;
 
-    fn deref(&self) -> &Self::Target {
+    fn deref(&self) -> &'a Self::Target {
         self.as_str()
     }
 }
