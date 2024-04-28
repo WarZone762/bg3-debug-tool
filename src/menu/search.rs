@@ -4,6 +4,7 @@ use imgui::{TableFlags, Ui};
 
 use self::{
     functions::FunctionCategory,
+    passives::PassiveCategory,
     spells::SpellCategory,
     statuses::StatusCategory,
     table::ObjectTable,
@@ -13,6 +14,7 @@ use crate::{game_definitions as gd, globals::Globals};
 
 mod functions;
 mod osiris_helpers;
+mod passives;
 mod spells;
 mod statuses;
 pub(crate) mod table;
@@ -25,9 +27,10 @@ macro_rules! choose_category {
             0 => $ident.items.$($tt)*,
             1 => $ident.spells.$($tt)*,
             2 => $ident.statuses.$($tt)*,
-            3 => $ident.functions.$($tt)*,
-            4 => $ident.scenery.$($tt)*,
-            5 => $ident.templates.$($tt)*,
+            3 => $ident.passives.$($tt)*,
+            4 => $ident.functions.$($tt)*,
+            5 => $ident.scenery.$($tt)*,
+            6 => $ident.templates.$($tt)*,
             _ => unreachable!(),
         }
     };
@@ -42,6 +45,7 @@ pub(crate) struct Search {
     items: ObjectTable<ItemCategory>,
     spells: ObjectTable<SpellCategory>,
     statuses: ObjectTable<StatusCategory>,
+    passives: ObjectTable<PassiveCategory>,
     functions: ObjectTable<FunctionCategory>,
     scenery: ObjectTable<SceneryCategory>,
     templates: ObjectTable<GameObjectTemplateCategory>,
@@ -58,6 +62,7 @@ impl Default for Search {
             items: ObjectTable::default(),
             spells: ObjectTable::default(),
             statuses: ObjectTable::default(),
+            passives: ObjectTable::default(),
             functions: ObjectTable::default(),
             scenery: ObjectTable::default(),
             templates: ObjectTable::default(),
@@ -77,7 +82,15 @@ impl Search {
         if ui.combo(
             "##object-category-combo",
             &mut self.cur_category,
-            &["Items", "Spells", "Statuses", "Osiris Functions", "Scenery Templates", "Templates"],
+            &[
+                "Items",
+                "Spells",
+                "Statuses",
+                "Passives",
+                "Osiris Functions",
+                "Scenery Templates",
+                "Templates",
+            ],
             |x| Cow::from(*x),
         ) && self.text.is_empty()
             && cur_category!(items.len() == 0)

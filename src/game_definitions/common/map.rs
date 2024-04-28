@@ -1,18 +1,33 @@
 use super::{Array, GamePtr, StaticArray, UninitializedStaticArray};
 
 pub(crate) type Map<TKey, TValue> = MapInternals<TKey, TValue>;
+pub(crate) type RefMap<TKey, TValue> = RefMapInternals<TKey, TValue>;
+
+#[derive(Debug)]
+#[repr(C)]
+pub(crate) struct RefMapInternals<TKey, TValue> {
+    pub item_count: u32,
+    pub hash_size: u32,
+    pub hash_table: GamePtr<GamePtr<MapNode<TKey, TValue>>>,
+}
+
+impl<K: 'static, V: 'static> RefMapInternals<K, V> {
+    pub fn iter(&self) -> impl Iterator<Item = GamePtr<MapNode<K, V>>> {
+        MapIter::new(self.hash_table, self.hash_size)
+    }
+}
 
 #[derive(Debug)]
 #[repr(C)]
 pub(crate) struct MapInternals<TKey, TValue> {
-    hash_size: u32,
-    hash_table: GamePtr<GamePtr<MapNode<TKey, TValue>>>,
-    item_count: u32,
+    pub hash_size: u32,
+    pub hash_table: GamePtr<GamePtr<MapNode<TKey, TValue>>>,
+    pub item_count: u32,
 }
 
 impl<K: 'static, V: 'static> MapInternals<K, V> {
     pub fn iter(&self) -> impl Iterator<Item = GamePtr<MapNode<K, V>>> {
-        MapIter::new(self)
+        MapIter::new(self.hash_table, self.hash_size)
     }
 }
 
@@ -32,8 +47,8 @@ pub(crate) struct MapIter<'a, K, V> {
 }
 
 impl<K, V> MapIter<'_, K, V> {
-    pub fn new(map: &MapInternals<K, V>) -> Self {
-        let map_arr = unsafe { std::slice::from_raw_parts(map.hash_table.ptr, map.hash_size as _) };
+    pub fn new(hash_table: GamePtr<GamePtr<MapNode<K, V>>>, hash_size: u32) -> Self {
+        let map_arr = unsafe { std::slice::from_raw_parts(hash_table.ptr, hash_size as _) };
         Self { map_arr, elem: GamePtr::null(), index: 0 }
     }
 }

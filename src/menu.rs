@@ -30,8 +30,10 @@ pub(crate) mod search;
 //   - [x] Osiris functions
 //   - [x] spells
 //   - [x] statuses
-//   - [ ] passives
-// - [ ] finish info tab
+//   - [x] passives
+//   - [ ] reactions
+//   - [ ] other template types and ability to spawn them, entities etc.
+// - [ ] finish info tab (components, stats, position)
 // - [ ] add regex search
 // - [ ] replace Win32 backend with SDL2
 // - [ ] ***add icons***

@@ -20,8 +20,8 @@ use self::mappings::{
 use crate::{
     err,
     game_definitions::{
-        FixedString, GamePtr, GlobalTemplateManager, LSStringView, SpellPrototypeManager,
-        StatusPrototypeManager, TranslatedStringRepository,
+        FixedString, GamePtr, GlobalTemplateManager, LSStringView, PassivePrototypeManager,
+        SpellPrototypeManager, StatusPrototypeManager, TranslatedStringRepository,
     },
     globals::Globals,
     warn,
@@ -325,8 +325,9 @@ static_symbols! {
 
     eoc__InterruptPrototypeManager: *const(),
     eoc__PassivePrototype__Init: fn(),
-    eoc__PassivePrototypeManager: *const(),
+    eoc__PassivePrototypeManager: GamePtr<GamePtr<PassivePrototypeManager>>,
     eoc__InterruptPrototype__Init: fn(),
+
     Noesis__SymbolManager__Buf1: *const(),
     Noesis__gReflection: *const(),
     Noesis__GUI__LoadXaml: fn(),

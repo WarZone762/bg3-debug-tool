@@ -1,7 +1,6 @@
 use game_object::GameObject;
 
 use super::{
-    // osiris_helpers::{add_status, remove_status},
     osiris_helpers::{add_status, remove_status},
     table::TableItemCategory,
 };
@@ -14,11 +13,11 @@ use crate::{
 #[derive(Clone, GameObject)]
 pub(crate) struct Status {
     pub status: &'static StatusPrototype,
-    #[column(name = "ID", visible)]
+    #[column(name = "Intenrnal Name", visible)]
     pub name: Option<String>,
-    #[column(name = "Name", visible)]
+    #[column(name = "Display Name", visible)]
     pub display_name: Option<String>,
-    #[column(name = "Description", visible)]
+    #[column(name = "Description")]
     pub desc: Option<String>,
 }
 

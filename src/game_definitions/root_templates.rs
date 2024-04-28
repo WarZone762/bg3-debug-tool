@@ -85,6 +85,7 @@ impl<'a> From<&'a GameObjectTemplate> for Template<'a> {
 #[derive(GameObject)]
 #[repr(C)]
 pub(crate) struct GameObjectTemplate {
+    #[skip]
     vptr: GamePtr<GameObjectTemplateVMT>,
     field_8: u64,
     pub id: FixedString,
@@ -129,11 +130,11 @@ impl GameObjectTemplate {
 #[derive(Debug)]
 #[repr(C)]
 pub(crate) struct GameObjectTemplateVMT {
-    dtor: fn(GamePtr<GameObjectTemplate>),
-    get_name: fn(GamePtr<GameObjectTemplate>, *const ()),
-    debug_dump: fn(GamePtr<GameObjectTemplate>, *const ()),
-    get_type: fn(GamePtr<GameObjectTemplate>) -> GamePtr<FixedString>,
-    get_real_type: fn(GamePtr<GameObjectTemplate>) -> GamePtr<FixedString>,
+    pub dtor: fn(GamePtr<GameObjectTemplate>),
+    pub get_name: fn(GamePtr<GameObjectTemplate>, *const ()),
+    pub debug_dump: fn(GamePtr<GameObjectTemplate>, *const ()),
+    pub get_type: fn(GamePtr<GameObjectTemplate>) -> GamePtr<FixedString>,
+    pub get_real_type: fn(GamePtr<GameObjectTemplate>) -> GamePtr<FixedString>,
 }
 
 #[derive(GameObject)]
@@ -302,7 +303,6 @@ pub(crate) struct ItemTemplate {
     pub container_auto_add_on_pickup: OverrideableProperty<bool>,
     pub container_content_filter_condition: OverrideableProperty<STDString>,
     pub interation_filter_list: GamePtr<MultiHashSet<Guid>>,
-    // pub interation_filter_list: u64,
     pub interaction_filter_type: OverrideableProperty<u8>,
     pub interaction_filter_requirement: OverrideableProperty<u8>,
     pub active_group_id: OverrideableProperty<FixedString>,

@@ -13,11 +13,11 @@ use crate::{
 #[derive(Clone, GameObject)]
 pub(crate) struct Spell {
     pub spell: &'static SpellPrototype,
-    #[column(name = "ID", visible)]
+    #[column(name = "Internal Name", visible)]
     pub name: Option<String>,
-    #[column(name = "Name", visible)]
+    #[column(name = "Display Name", visible)]
     pub display_name: Option<String>,
-    #[column(name = "Description", visible)]
+    #[column(name = "Description")]
     pub desc: Option<String>,
 }
 

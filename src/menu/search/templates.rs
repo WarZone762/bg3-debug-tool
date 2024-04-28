@@ -42,7 +42,7 @@ pub(crate) struct Item {
     pub name: &'static str,
     #[column(name = "Display Name", visible)]
     pub display_name: Option<&'static str>,
-    #[column(name = "Description", visible)]
+    #[column(name = "Description")]
     pub desc: Option<&'static str>,
 }
 

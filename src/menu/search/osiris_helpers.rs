@@ -50,6 +50,16 @@ pub(crate) fn remove_status(name: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+pub(crate) fn add_passive(name: &str) -> anyhow::Result<()> {
+    osi_fn!(AddPassive, get_host_character()?, name)?;
+    Ok(())
+}
+
+pub(crate) fn remove_passive(name: &str) -> anyhow::Result<()> {
+    osi_fn!(RemovePassive, get_host_character()?, name)?;
+    Ok(())
+}
+
 pub(crate) fn get_host_character() -> anyhow::Result<osiris::Value> {
     Ok(osi_fn!(GetHostCharacter)?.unwrap())
 }

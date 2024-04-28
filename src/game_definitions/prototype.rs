@@ -2,8 +2,8 @@ use bitflags::bitflags;
 use game_object::{GameObject, TableValue};
 
 use super::{
-    Array, DamageType, DiceSizeId, FixedString, GamePtr, Guid, MultiHashMap, STDString, Set,
-    TranslatedString,
+    Array, DamageType, DiceSizeId, FixedString, Functors, GamePtr, Guid, MultiHashMap, RefMap,
+    STDString, Set, TranslatedString,
 };
 
 #[derive(Debug)]
@@ -202,7 +202,7 @@ pub(crate) struct UseCost {
     pub amonut: f32,
 }
 
-#[derive(GameObject)]
+#[derive(Debug)]
 #[repr(C)]
 pub(crate) struct StatusPrototypeManager {
     vptr: *const (),
@@ -343,4 +343,37 @@ pub(crate) enum SurfaceType {
     CrawlerMucusCloud = 73,
     Cloudkill6Cloud = 74,
     Sentinel = 75,
+}
+
+#[derive(Debug)]
+#[repr(C)]
+pub(crate) struct PassivePrototypeManager {
+    vptr: *const (),
+    pub passives: RefMap<FixedString, PassivePrototype>,
+    pub initialized: bool,
+}
+
+#[derive(GameObject)]
+#[repr(C)]
+pub(crate) struct PassivePrototype {
+    pub properties: u32,
+    pub name: FixedString,
+    pub description: DescriptionInfo,
+    pub enabled_conditions: i32,
+    pub enabled_context: u64,
+    pub toggle_on_effect: FixedString,
+    pub toggle_off_effect: FixedString,
+    pub stats_functor_context: u64,
+    pub conditions_index: i32,
+    pub stats_functors: Functors,
+    pub toggle_on_functors: Functors,
+    pub toggle_off_functors: Functors,
+    pub toggle_group: FixedString,
+    pub toggle_off_context: u64,
+    pub boost_context: u64,
+    pub boost_condition_index: i32,
+    #[column(name = "Boosts_SV")]
+    pub boosts_sv: Array<*const ()>,
+    pub priority_order: i32,
+    pub tooltip_conditional_damage: FixedString,
 }
