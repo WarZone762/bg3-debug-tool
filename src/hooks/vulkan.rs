@@ -29,7 +29,12 @@ vulkan("vulkan-1.dll") {
         let res = original::vkCreateInstance(p_create_info, p_allocator, p_instance);
 
         let instance = unsafe {
-            ash::Instance::load(ash::Entry::linked().static_fn(), *p_instance)
+            ash::Instance::load(
+                ash::Entry::load()
+                    .expect("failed to load Vulkan library")
+                    .static_fn(),
+                *p_instance,
+            )
         };
         unsafe {
             if let Some(vk_data) = DATA.lock().unwrap().as_mut() {

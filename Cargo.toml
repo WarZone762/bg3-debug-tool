@@ -1,3 +1,5 @@
+cargo-features = ["different-binary-name"]
+
 [workspace]
 members = ["src/game_object"]
 
@@ -11,6 +13,7 @@ crate-type = ["cdylib"]
 
 [[bin]]
 name = "bg3-debug-tool-loader"
+filename = "bg3-debug-tool"
 path = "src/main.rs"
 
 [profile.dev]
@@ -29,7 +32,7 @@ debug = []
 [dependencies]
 game-object = { path = "src/game_object" }
 anyhow = "1.0"
-ash = { version = "0.37", features = ["linked"] }
+ash = { version = "0.37" }
 bitflags = "2.5"
 build-time = "0.1"
 clap = { version = "4.5", features = ["derive"] }
@@ -73,3 +76,4 @@ x86_64 = "0.14"
 
 [build-dependencies]
 cc = "1.0"
+embed-resource = "2.4.2"

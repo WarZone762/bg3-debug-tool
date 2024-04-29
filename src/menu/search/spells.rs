@@ -1,7 +1,9 @@
 use game_object::GameObject;
 
 use super::{
-    osiris_helpers::{add_spell, add_spell_boost, remove_spell, remove_spell_boost},
+    osiris_helpers::{
+        add_spell, add_spell_boost, is_game_state_running, remove_spell, remove_spell_boost,
+    },
     table::TableItemCategory,
 };
 use crate::{
@@ -37,6 +39,19 @@ pub(crate) struct SpellCategory;
 impl SpellCategory {
     fn draw_buttons(&self, ui: &imgui::Ui, item: &mut Spell) -> anyhow::Result<()> {
         if let Some(name) = &item.name {
+            if !is_game_state_running().is_ok_and(|x| x) {
+                ui.disabled(true, || {
+                    ui.text("Waiting for game to load...");
+                    ui.button("Add for Action");
+                    ui.same_line();
+                    ui.button("Remove for Action");
+                    ui.button("Add for Spell Slot");
+                    ui.same_line();
+                    ui.button("Remove for Spell Slot");
+                });
+                return Ok(());
+            }
+
             if ui.button("Add for Action") {
                 add_spell(name)?;
             }

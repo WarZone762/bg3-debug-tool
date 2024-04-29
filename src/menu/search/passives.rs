@@ -1,7 +1,7 @@
 use game_object::GameObject;
 
 use super::{
-    osiris_helpers::{add_passive, remove_passive},
+    osiris_helpers::{add_passive, has_passive, is_game_state_running, remove_passive},
     table::TableItemCategory,
 };
 use crate::{
@@ -37,12 +37,29 @@ pub(crate) struct PassiveCategory;
 impl PassiveCategory {
     fn draw_buttons(&mut self, ui: &imgui::Ui, item: &mut Passive) -> anyhow::Result<()> {
         if let Some(name) = &item.name {
-            if ui.button("Add") {
-                add_passive(name)?;
+            if !is_game_state_running().is_ok_and(|x| x) {
+                ui.text("Waiting for game to load...");
+                ui.disabled(true, || {
+                    ui.text("Is present: ");
+                    ui.same_line();
+                    ui.text_colored([1.0, 0.0, 0.0, 1.0], "");
+                    ui.button("Add");
+                });
+                return Ok(());
             }
+
+            ui.text("Is present: ");
             ui.same_line();
-            if ui.button("Remove") {
-                remove_passive(name)?;
+            if !has_passive(name).is_ok_and(|x| x) {
+                ui.text_colored([1.0, 0.0, 0.0, 1.0], "");
+                if ui.button("Add") {
+                    add_passive(name)?;
+                }
+            } else {
+                ui.text_colored([0.0, 1.0, 0.0, 1.0], "");
+                if ui.button("Remove") {
+                    remove_passive(name)?;
+                }
             }
         }
         Ok(())

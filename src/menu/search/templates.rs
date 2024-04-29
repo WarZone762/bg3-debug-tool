@@ -1,7 +1,11 @@
 use game_object::GameObject;
 use imgui::Ui;
 
-use super::{osiris_helpers::give_item, table::TableItemCategory, templates};
+use super::{
+    osiris_helpers::{give_item, is_game_state_running},
+    table::TableItemCategory,
+    templates,
+};
 use crate::{
     err,
     game_definitions::{self as gd, GameObjectTemplate, ItemTemplate, SceneryTemplate},
@@ -81,6 +85,15 @@ impl TableItemCategory for ItemCategory {
 
     fn draw_actions(&mut self, ui: &Ui, item: &mut Self::Item) {
         if let Some(id) = item.id {
+            if !is_game_state_running().is_ok_and(|x| x) {
+                ui.disabled(true, || {
+                    ui.text("Waiting for game to load...");
+                    ui.input_int("Amount", &mut self.give_amount).build();
+                    ui.button("Give");
+                });
+                return;
+            }
+
             ui.input_int("Amount", &mut self.give_amount).build();
             if self.give_amount < 1 {
                 self.give_amount = 1;

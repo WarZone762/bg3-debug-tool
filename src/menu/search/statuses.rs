@@ -1,7 +1,7 @@
 use game_object::GameObject;
 
 use super::{
-    osiris_helpers::{add_status, remove_status},
+    osiris_helpers::{add_status, has_status, is_game_state_running, remove_status},
     table::TableItemCategory,
 };
 use crate::{
@@ -44,9 +44,29 @@ impl Default for StatusCategory {
 impl StatusCategory {
     fn draw_buttons(&mut self, ui: &imgui::Ui, item: &mut Status) -> anyhow::Result<()> {
         if let Some(name) = &item.name {
+            if !is_game_state_running().is_ok_and(|x| x) {
+                ui.text("Waiting for game to load...");
+                ui.disabled(true, || {
+                    ui.text("Is present: ");
+                    ui.same_line();
+                    ui.input_int("Seconds (-1 = forever)", &mut self.duration).build();
+                    ui.text_colored([1.0, 0.0, 0.0, 1.0], "");
+                    ui.button("Add");
+                });
+                return Ok(());
+            }
+
             ui.input_int("Seconds (-1 = forever)", &mut self.duration).build();
             if self.duration < -1 {
                 self.duration = -1;
+            }
+
+            ui.text("Is present: ");
+            ui.same_line();
+            if has_status(name).is_ok_and(|x| x) {
+                ui.text_colored([0.0, 1.0, 0.0, 1.0], "");
+            } else {
+                ui.text_colored([1.0, 0.0, 0.0, 1.0], "");
             }
 
             if ui.button("Add") {

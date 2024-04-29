@@ -1,6 +1,6 @@
 use std::ops::DerefMut;
 
-use imgui::{sys::igGetMainViewport, Ui};
+use imgui::{sys::igGetMainViewport, FontConfig, FontGlyphRanges, FontSource, Ui};
 
 use crate::globals::Globals;
 
@@ -36,6 +36,7 @@ pub(crate) mod search;
 // - [ ] finish info tab (components, stats, position)
 // - [ ] add regex search
 // - [ ] replace Win32 backend with SDL2
+// - [ ] replace imgui with egui
 // - [ ] ***add icons***
 
 pub(crate) struct Menu {
@@ -65,6 +66,15 @@ impl Menu {
 
         io.config_flags |= imgui::ConfigFlags::NAV_ENABLE_KEYBOARD;
         io.config_flags |= imgui::ConfigFlags::NAV_ENABLE_GAMEPAD;
+
+        ctx.fonts().add_font(&[FontSource::TtfData {
+            data: include_bytes!("../assets/font/FiraMonoNerdFontPropo-Regular.otf"),
+            size_pixels: 16.0,
+            config: Some(FontConfig {
+                glyph_ranges: FontGlyphRanges::from_slice(&[1, 0x10FFFF, 0]),
+                ..Default::default()
+            }),
+        }]);
     }
 
     fn render(&mut self, ui: &Ui) {
@@ -84,9 +94,8 @@ impl Menu {
                     .title_bar(false)
                     .draw_background(false)
                     .movable(false)
-                    .position([0.0, 0.0], imgui::Condition::Always)
+                    .position([0.0, 25.0], imgui::Condition::Always)
                     .build(|| {
-                        ui.set_window_font_scale(1.125);
                         ui.text("Press F11 to open the Debug Menu, F9 to hide this text");
                     });
             }
@@ -98,11 +107,9 @@ impl Menu {
                 [viewport_pos.x + viewport_size.x * 0.75 - 10.0, 10.0],
                 imgui::Condition::FirstUseEver,
             )
-            .size([viewport_size.x / 4.0, viewport_size.y / 4.0], imgui::Condition::FirstUseEver)
+            .size([viewport_size.x / 4.0, viewport_size.y / 3.0], imgui::Condition::FirstUseEver)
             .opened(&mut self.opened)
             .build(|| {
-                ui.set_window_font_scale(1.125);
-
                 if let Some(tab_bar) = ui.tab_bar("tab-bar") {
                     if let Some(item) = ui.tab_item("Game Data Explorer") {
                         self.search.render(ui);

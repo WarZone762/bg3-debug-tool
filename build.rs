@@ -9,4 +9,5 @@ fn main() {
         .file("third-party/imgui/backends/imgui_impl_win32.cpp")
         .compile("imgui_backends");
     println!("cargo:rustc-link-lib=vulkan-1");
+    embed_resource::compile("assets/res.rc", embed_resource::NONE);
 }

@@ -49,6 +49,8 @@ fn main() {
         old_panic_hook(info)
     }));
 
+    unsafe { libc::atexit(atexit_handler) };
+
     if let Ok(version) = version::game_version() {
         if version.is_supported() {
             info!("Game version {version} OK");
@@ -77,4 +79,10 @@ fn init() -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+extern "C" fn atexit_handler() {
+    if std::path::Path::new("steam_appid.txt").try_exists().is_ok_and(|x| x) {
+        std::fs::remove_file("steam_appid.txt").expect("failed to remove 'steam_appid.txt");
+    }
 }

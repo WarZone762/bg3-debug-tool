@@ -1,3 +1,5 @@
+use anyhow::bail;
+
 use crate::{osi_fn, wrappers::osiris};
 
 pub(crate) fn give_item(uuid: &str, amount: i32) -> anyhow::Result<()> {
@@ -45,6 +47,13 @@ pub(crate) fn add_status(name: &str, duration: i32) -> anyhow::Result<()> {
     Ok(())
 }
 
+pub(crate) fn has_status(name: &str) -> anyhow::Result<bool> {
+    match osi_fn!(HasActiveStatus, get_host_character()?, name)? {
+        Some(osiris::Value::Int(x)) => Ok(x != 0),
+        _ => bail!("failed to check status"),
+    }
+}
+
 pub(crate) fn remove_status(name: &str) -> anyhow::Result<()> {
     osi_fn!(RemoveStatus, get_host_character()?, name, "")?;
     Ok(())
@@ -55,6 +64,13 @@ pub(crate) fn add_passive(name: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+pub(crate) fn has_passive(name: &str) -> anyhow::Result<bool> {
+    match osi_fn!(HasPassive, get_host_character()?, name)? {
+        Some(osiris::Value::Int(x)) => Ok(x != 0),
+        _ => bail!("failed to check passive status"),
+    }
+}
+
 pub(crate) fn remove_passive(name: &str) -> anyhow::Result<()> {
     osi_fn!(RemovePassive, get_host_character()?, name)?;
     Ok(())
@@ -62,4 +78,11 @@ pub(crate) fn remove_passive(name: &str) -> anyhow::Result<()> {
 
 pub(crate) fn get_host_character() -> anyhow::Result<osiris::Value> {
     Ok(osi_fn!(GetHostCharacter)?.unwrap())
+}
+
+pub(crate) fn is_game_state_running() -> anyhow::Result<bool> {
+    match osi_fn!(IsGameStateRunning)? {
+        Some(osiris::Value::Int(x)) => Ok(x != 0),
+        _ => bail!("failed to check game state"),
+    }
 }

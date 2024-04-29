@@ -88,6 +88,9 @@ impl<T: TableItemCategory> ObjectTable<T> {
         self.items_per_page = items_per_page as _;
 
         let visible_cols = self.columns.iter().filter(|x| x.visible).collect_vec();
+        if visible_cols.is_empty() {
+            return;
+        }
         if let Some(tbl) = ui.begin_table_with_sizing(
             "items-tbl",
             visible_cols.len(),
@@ -99,6 +102,7 @@ impl<T: TableItemCategory> ObjectTable<T> {
             0.0,
         ) {
             ui.table_setup_scroll_freeze(0, 1);
+            ui.set_window_font_scale(1.125);
             for field in &visible_cols {
                 ui.table_setup_column_with(imgui::TableColumnSetup {
                     name: field.name.as_str(),
@@ -108,6 +112,7 @@ impl<T: TableItemCategory> ObjectTable<T> {
             }
             ui.table_headers_row();
             ui.table_next_row();
+            ui.set_window_font_scale(1.0);
             if let Some(specs) = ui.table_sort_specs_mut() {
                 specs.conditional_sort(|specs| {
                     if let Some(specs) = specs.iter().next() {

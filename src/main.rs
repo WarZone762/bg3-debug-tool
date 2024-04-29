@@ -1,6 +1,6 @@
 #![windows_subsystem = "windows"]
 
-use std::{mem, ptr};
+use std::{fs::File, io::Write, mem, ptr};
 
 use clap::Parser;
 use windows::{
@@ -28,6 +28,11 @@ fn main() {
     if let Some(port) = args.port {
         std::env::set_var("BG3_DEBUG_TOOL_PORT", port.to_string());
     }
+
+    File::create("steam_appid.txt")
+        .expect("failed to create 'steam_appid.txt'")
+        .write_all(b"1086940\n")
+        .expect("failed to write to 'steam_appid.txt'");
 
     let startup_info =
         STARTUPINFOA { cb: mem::size_of::<STARTUPINFOA>() as _, ..Default::default() };

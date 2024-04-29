@@ -1,5 +1,3 @@
-env_files = [{ path = "./.env" }]
-
 [config]
 default_to_workspace = false
 
@@ -15,22 +13,28 @@ BUILD_TYPE = "release"
 command = "cargo"
 args = ["clean"]
 
-#TODO: xwin
+[tasks.xwin]
+condition = { files_not_exist = [".xwin"], platforms = ["linux"] }
+install_crate = { crate_name = "xwin", binary = "xwin", test_arg = "--help" }
+command = "xwin"
+args = ["--accept-license", "splat", "--output", ".xwin"]
 
 [tasks.build]
 command = "cargo"
 args = ["build", "--profile=${PROFILE_NAME}"]
+dependencies = ["xwin"]
 
 [tasks.test]
 command = "cargo"
 args = ["test", "--", "--nocapture"]
 
 [tasks.copy]
+env_files = [{ path = "./.env" }]
 command = "cp"
 args = [
     "-v",
     "./target/x86_64-pc-windows-msvc/${BUILD_TYPE}/bg3_debug_tool.dll",
-    "./target/x86_64-pc-windows-msvc/${BUILD_TYPE}/bg3-debug-tool-loader.exe",
+    "./target/x86_64-pc-windows-msvc/${BUILD_TYPE}/bg3-debug-tool.exe",
     "${GAME_PATH}/bin/",
 ]
 dependencies = ["build"]

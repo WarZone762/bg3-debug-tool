@@ -4,5 +4,4 @@ Cargo.lock
 /.xwin
 /.xwin-cache
 
-/third-party
 .env
