@@ -1,6 +1,6 @@
 use std::{mem, ptr, sync::Mutex};
 
-use ash::vk;
+use ash::vk::{self, Handle};
 
 use crate::{
     hook_definitions,
@@ -19,8 +19,126 @@ pub(crate) fn init(menu: impl ImGuiMenu<ash::Device> + 'static) -> anyhow::Resul
     hook()
 }
 
+static ATLASES: Mutex<Vec<vk::Image>> = Mutex::new(Vec::new());
+static ATLAS_VIEWS: Mutex<Vec<vk::ImageView>> = Mutex::new(Vec::new());
+static DSC_SETS: Mutex<Vec<vk::DescriptorSet>> = Mutex::new(Vec::new());
+static mut SLIDER: usize = 0;
+static mut SIZE: f32 = 512.0;
+
 hook_definitions! {
 vulkan("vulkan-1.dll") {
+    #[no_init = yes]
+    fn vkUpdateDescriptorSets(
+        device: vk::Device,
+        descriptor_write_count: u32,
+        p_descriptor_writes: *const vk::WriteDescriptorSet,
+        descriptor_copy_count: u32,
+        p_descriptor_copies: *const vk::CopyDescriptorSet,
+    ) -> vk::Result {
+        // info!("upd dsc sets, writes: {descriptor_write_count}, copies: {descriptor_copy_count}");
+        // unsafe {
+        //     let views = ATLAS_VIEWS.lock().unwrap();
+        //     let mut dsc_sets = DSC_SETS.lock().unwrap();
+        //     for i in 0..descriptor_write_count {
+        //         let writes = *p_descriptor_writes.add(i as _);
+        //         // info!("set: {:?}", writes.dst_set);
+        //         // info!("binding: {}", writes.dst_binding);
+        //         // info!("array element: {}", writes.dst_array_element);
+        //         // info!("count: {}", writes.descriptor_count);
+        //         // info!("type: {:?}", writes.descriptor_type);
+        //         if !writes.p_image_info.is_null()
+        //             && writes.descriptor_type == vk::DescriptorType::COMBINED_IMAGE_SAMPLER
+        //         {
+        //             for j in 0..writes.descriptor_count {
+        //                 let info = *writes.p_image_info.add(j as _);
+        //                 if info.image_layout == vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
+        //                     && views.iter().any(|x| *x == info.image_view)
+        //                 {
+        //                     info!("texture atlas descriptor set: {:?}", writes.dst_set);
+        //                     dsc_sets.push(writes.dst_set);
+        //                 }
+        //                 // info!("image sampler: {:?}", info.sampler);
+        //                 // info!("image view: {:?}", info.image_view);
+        //                 // info!("image layout: {:?}", info.image_layout);
+        //             }
+        //         }
+        //         // if !writes.p_buffer_info.is_null() {
+        //         //     for j in 0..writes.descriptor_count {
+        //         //         let info = *writes.p_buffer_info.add(j as _);
+        //         //         info!("buffer: {:?}", info.buffer);
+        //         //         info!("buffer range: {}", info.range);
+        //         //         info!("buffer offset: {}", info.offset);
+        //         //     }
+        //         // }
+        //         // if !writes.p_texel_buffer_view.is_null() {
+        //         //     for j in 0..writes.descriptor_count {
+        //         //         info!("buffer view: {:?}", (*writes.p_texel_buffer_view.add(j as _)));
+        //         //     }
+        //         // }
+        //     }
+        // }
+
+        original::vkUpdateDescriptorSets(
+            device,
+            descriptor_write_count,
+            p_descriptor_writes,
+            descriptor_copy_count,
+            p_descriptor_copies,
+        )
+    }
+
+    #[no_init = yes]
+    fn vkCreateImage(
+        device: vk::Device,
+        p_create_info: *const vk::ImageCreateInfo,
+        p_allocator: *const vk::AllocationCallbacks,
+        p_image: *mut vk::Image
+    ) -> vk::Result {
+        let res = original::vkCreateImage(device, p_create_info, p_allocator, p_image);
+        unsafe {
+            let info = *p_create_info;
+            if info.image_type == vk::ImageType::TYPE_2D
+                && info.format == vk::Format::BC3_UNORM_BLOCK
+                && info.samples == vk::SampleCountFlags::TYPE_1
+                && info.tiling == vk::ImageTiling::OPTIMAL
+                && info.usage == (
+                    vk::ImageUsageFlags::TRANSFER_SRC
+                    | vk::ImageUsageFlags::TRANSFER_DST
+                    | vk::ImageUsageFlags::SAMPLED
+                )
+                && info.sharing_mode == vk::SharingMode::CONCURRENT
+                && info.initial_layout == vk::ImageLayout::UNDEFINED
+                && info.extent.width == 2048
+                && info.extent.height == 2048
+                && info.extent.depth == 1
+            {
+                ATLASES.lock().unwrap().push(*p_image);
+                // info!("possible texture atlas: {:?}", *p_image);
+            }
+        }
+
+        res
+    }
+
+    #[no_init = yes]
+    fn vkCreateImageView(
+        device: vk::Device,
+        p_create_info: *const vk::ImageViewCreateInfo,
+        p_allocator: *const vk::AllocationCallbacks,
+        p_image_view: *mut vk::ImageView
+    ) -> vk::Result {
+        let res = original::vkCreateImageView(device, p_create_info, p_allocator, p_image_view);
+        unsafe {
+            let info = *p_create_info;
+            let atlases = ATLASES.lock().unwrap();
+            if atlases.iter().any(|x| *x == info.image) {
+                ATLAS_VIEWS.lock().unwrap().push(*p_image_view);
+            }
+        }
+
+        res
+    }
+
     fn vkCreateInstance(
         p_create_info: *mut vk::InstanceCreateInfo,
         p_allocator: *const vk::AllocationCallbacks,
@@ -130,10 +248,27 @@ vulkan("vulkan-1.dll") {
                     .get_device_proc_addr(*p_device, c"vkQueuePresentKHR".as_ptr())
                     .unwrap();
 
+                let upd_dsc_set = builder
+                    .instance()
+                    .get_device_proc_addr(*p_device, c"vkUpdateDescriptorSets".as_ptr())
+                    .unwrap();
+                let create_image = builder
+                    .instance()
+                    .get_device_proc_addr(*p_device, c"vkCreateImage".as_ptr())
+                    .unwrap();
+                let create_image_view = builder
+                    .instance()
+                    .get_device_proc_addr(*p_device, c"vkCreateImageView".as_ptr())
+                    .unwrap();
+
                 detour(|| {
                     HOOKS.vkCreatePipelineCache.attach(create_pipeline_cache as _);
                     HOOKS.vkCreateSwapchainKHR.attach(create_swapchain as _);
                     HOOKS.vkQueuePresentKHR.attach(queue_present as _);
+
+                    HOOKS.vkUpdateDescriptorSets.attach(upd_dsc_set as _);
+                    HOOKS.vkCreateImage.attach(create_image as _);
+                    HOOKS.vkCreateImageView.attach(create_image_view as _);
                 });
             }
         }
@@ -235,6 +370,9 @@ pub(crate) struct VulkanData<M: ImGuiMenu<ash::Device>> {
     ctx: imgui::Context,
     imgui_init: bool,
     menu: M,
+
+    sampler: vk::Sampler,
+    descriptor_set_layout: vk::DescriptorSetLayout,
 }
 
 impl<M: ImGuiMenu<ash::Device>> VulkanData<M> {
@@ -292,13 +430,62 @@ impl<M: ImGuiMenu<ash::Device>> VulkanData<M> {
                 self.imgui_init = true;
             }
 
+            let views = ATLAS_VIEWS.lock().unwrap();
+            let mut dsc_sets = DSC_SETS.lock().unwrap();
+            if dsc_sets.len() < views.len() {
+                for view in &views[dsc_sets.len()..] {
+                    let dsc_set = self
+                        .dev
+                        .allocate_descriptor_sets(
+                            &vk::DescriptorSetAllocateInfo::builder()
+                                .descriptor_pool(self.descriptor_pool)
+                                .set_layouts(&[self.descriptor_set_layout]),
+                        )
+                        .unwrap()[0];
+                    self.dev.update_descriptor_sets(
+                        &[*vk::WriteDescriptorSet::builder()
+                            .dst_set(dsc_set)
+                            .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                            .image_info(&[*vk::DescriptorImageInfo::builder()
+                                .image_view(*view)
+                                .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                                .sampler(self.sampler)])],
+                        &[],
+                    );
+                    dsc_sets.push(dsc_set);
+                    // dsc_sets.push(ImGui_ImplVulkan_AddTexture(
+                    //     self.sampler,
+                    //     *view,
+                    //     vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                    // ));
+                }
+            }
+
             ImGui_ImplVulkan_NewFrame();
             backend::new_frame();
 
-            self.menu.pre_render(&mut self.ctx);
             let ui = self.ctx.new_frame();
-            self.menu.render(ui);
-            self.ctx.render();
+            ui.window("ImGui Test").build(|| {
+                ui.slider("Texture", 0, dsc_sets.len(), &mut SLIDER);
+                if let Some(i) = dsc_sets.get(SLIDER) {
+                    imgui::sys::igImage(
+                        i.as_raw() as _,
+                        [512.0, 512.0].into(),
+                        [0.0, 0.0].into(),
+                        [1.0, 1.0].into(),
+                        [1.0, 1.0, 1.0, 1.0].into(),
+                        [1.0, 1.0, 1.0, 1.0].into(),
+                    );
+                    ui.image_button("##test", imgui::TextureId::new(i.as_raw() as _), [
+                        2048.0, 2048.0,
+                    ]);
+                }
+            });
+
+            // self.menu.pre_render(&mut self.ctx);
+            // let ui = self.ctx.new_frame();
+            // self.menu.render(ui);
+            // self.ctx.render();
 
             ImGui_ImplVulkan_RenderDrawData(
                 self.ctx.render(),
@@ -377,13 +564,39 @@ impl<M: ImGuiMenu<ash::Device>> VulkanDataBuilder<M> {
 
             let pool_sizes = [*vk::DescriptorPoolSize::builder()
                 .ty(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-                .descriptor_count(10)];
+                .descriptor_count(1024)];
 
             let info = vk::DescriptorPoolCreateInfo::builder()
                 .flags(vk::DescriptorPoolCreateFlags::FREE_DESCRIPTOR_SET)
-                .max_sets(1)
+                .max_sets(1024)
                 .pool_sizes(&pool_sizes);
             let descriptor_pool = dev.create_descriptor_pool(&info, None).unwrap();
+            let descriptor_set_layout = dev
+                .create_descriptor_set_layout(
+                    &vk::DescriptorSetLayoutCreateInfo::builder().bindings(&[
+                        *vk::DescriptorSetLayoutBinding::builder()
+                            .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                            .descriptor_count(1)
+                            .binding(0)
+                            .stage_flags(vk::ShaderStageFlags::FRAGMENT),
+                    ]),
+                    None,
+                )
+                .unwrap();
+
+            let sampler = dev
+                .create_sampler(
+                    &vk::SamplerCreateInfo::builder()
+                        .address_mode_u(vk::SamplerAddressMode::CLAMP_TO_EDGE)
+                        .address_mode_v(vk::SamplerAddressMode::CLAMP_TO_EDGE)
+                        .address_mode_w(vk::SamplerAddressMode::CLAMP_TO_EDGE)
+                        .min_filter(vk::Filter::LINEAR)
+                        .mag_filter(vk::Filter::LINEAR)
+                        .mipmap_mode(vk::SamplerMipmapMode::LINEAR)
+                        .max_lod(vk::LOD_CLAMP_NONE),
+                    None,
+                )
+                .unwrap();
 
             VulkanData {
                 instance,
@@ -398,6 +611,9 @@ impl<M: ImGuiMenu<ash::Device>> VulkanDataBuilder<M> {
                 ctx,
                 imgui_init: false,
                 menu,
+
+                sampler,
+                descriptor_set_layout,
             }
         }
     }
@@ -588,6 +804,11 @@ extern "C" {
         command: vk::CommandBuffer,
         pipeline: vk::Pipeline,
     );
+    fn ImGui_ImplVulkan_AddTexture(
+        sampler: vk::Sampler,
+        image_view: vk::ImageView,
+        image_layout: vk::ImageLayout,
+    ) -> vk::DescriptorSet;
 }
 
 #[repr(C)]
