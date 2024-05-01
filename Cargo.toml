@@ -73,6 +73,8 @@ windows = { version = "0.54", features = [
     "Win32_UI_WindowsAndMessaging",
 ] }
 x86_64 = "0.14"
+egui = "0.27.2"
+egui_demo_lib = "0.27.2"
 
 [build-dependencies]
 cc = "1.0"

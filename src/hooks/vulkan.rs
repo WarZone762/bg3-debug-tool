@@ -261,12 +261,11 @@ impl<M: ImGuiMenu<ash::Device>> VulkanData<M> {
                 )
                 .unwrap();
 
-            let clear_values = [vk::ClearValue::default()];
             let info = vk::RenderPassBeginInfo::builder()
                 .render_pass(self.swapchain_data.render_pass)
                 .framebuffer(image.framebuffer)
                 .render_area(*vk::Rect2D::builder().extent(self.swapchain_data.extent))
-                .clear_values(&clear_values);
+                .clear_values(&[]);
             self.dev.cmd_begin_render_pass(
                 image.command_buffer,
                 &info,

@@ -6,6 +6,8 @@ use crate::globals::Globals;
 
 pub(crate) mod backend;
 mod console;
+pub(crate) mod egui_backend_win32;
+pub(crate) mod egui_vulkan;
 pub(crate) mod search;
 
 // TODO:

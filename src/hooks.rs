@@ -11,6 +11,7 @@ use windows::{
 pub(crate) mod dx11;
 pub(crate) mod osiris;
 pub(crate) mod vulkan;
+pub(crate) mod vulkan_egui;
 
 #[macro_export]
 macro_rules! hook_definitions {
