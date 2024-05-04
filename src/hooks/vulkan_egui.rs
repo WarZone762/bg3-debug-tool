@@ -1,12 +1,20 @@
-use std::{collections::HashMap, mem, ptr, sync::Mutex};
+use std::{
+    collections::{hash_map, HashMap},
+    mem,
+    ops::Deref,
+    ptr,
+    sync::Mutex,
+};
 
-use ash::vk;
+use ash::vk::{self, Handle};
 use egui::{
     epaint::{self, Primitive},
     Context, FullOutput, ImageData, Pos2, TextureId, TexturesDelta,
 };
 
 use crate::{
+    game_definitions::{self, FixedString},
+    globals::Globals,
     hook_definitions,
     hooks::detour,
     info,
@@ -28,6 +36,7 @@ static ATLASES: Mutex<Vec<vk::Image>> = Mutex::new(Vec::new());
 static ATLAS_VIEWS: Mutex<Vec<vk::ImageView>> = Mutex::new(Vec::new());
 static DSC_SETS: Mutex<Vec<vk::DescriptorSet>> = Mutex::new(Vec::new());
 static mut SLIDER: usize = 0;
+static mut SELECTED: usize = 0;
 static mut SIZE: f32 = 512.0;
 
 hook_definitions! {
@@ -52,13 +61,14 @@ vulkan("vulkan-1.dll") {
         //         // info!("count: {}", writes.descriptor_count);
         //         // info!("type: {:?}", writes.descriptor_type);
         //         if !writes.p_image_info.is_null()
-        //             && writes.descriptor_type == vk::DescriptorType::COMBINED_IMAGE_SAMPLER
+        //             // && writes.descriptor_type == vk::DescriptorType::COMBINED_IMAGE_SAMPLER
         //         {
         //             for j in 0..writes.descriptor_count {
         //                 let info = *writes.p_image_info.add(j as _);
-        //                 if info.image_layout == vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
-        //                     && views.iter().any(|x| *x == info.image_view)
+        //                 if /* info.image_layout == vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL && */
+        //                     views.iter().any(|x| *x == info.image_view)
         //                 {
+        //                     // std::intrinsics::breakpoint();
         //                     info!("texture atlas descriptor set: {:?}", writes.dst_set);
         //                     dsc_sets.push(writes.dst_set);
         //                 }
@@ -117,7 +127,8 @@ vulkan("vulkan-1.dll") {
                 && info.extent.height == 2048
                 && info.extent.depth == 1
             {
-                ATLASES.lock().unwrap().push(*p_image);
+                // std::intrinsics::breakpoint();
+                // ATLASES.lock().unwrap().push(*p_image);
                 // info!("possible texture atlas: {:?}", *p_image);
             }
         }
@@ -133,13 +144,16 @@ vulkan("vulkan-1.dll") {
         p_image_view: *mut vk::ImageView
     ) -> vk::Result {
         let res = original::vkCreateImageView(device, p_create_info, p_allocator, p_image_view);
-        unsafe {
-            let info = *p_create_info;
-            let atlases = ATLASES.lock().unwrap();
-            if atlases.iter().any(|x| *x == info.image) {
-                ATLAS_VIEWS.lock().unwrap().push(*p_image_view);
-            }
-        }
+        // unsafe {
+        //     let info = *p_create_info;
+        //     let atlases = ATLASES.lock().unwrap();
+        //     if atlases.iter().any(|x| *x == info.image) {
+        //         ATLAS_VIEWS.lock().unwrap().push(*p_image_view);
+        //     }
+        // }
+        // unsafe {
+        //     std::intrinsics::breakpoint();
+        // }
 
         res
     }
@@ -388,6 +402,7 @@ pub(crate) struct VulkanData<M: EguiMenu> {
     pipeline_layout: vk::PipelineLayout,
 
     textures: HashMap<TextureId, (vk::DescriptorSet, Texture)>,
+    dsc_sets: HashMap<u32, vk::DescriptorSet>,
 
     descriptor_set_layout: vk::DescriptorSetLayout,
     sampler: vk::Sampler,
@@ -429,6 +444,16 @@ impl<M: EguiMenu> VulkanData<M> {
                 &info,
                 vk::SubpassContents::INLINE,
             );
+
+            // if let Some(atlas_map) = Globals::static_symbols()
+            //     .ls__gTextureAtlasMap
+            //     .and_then(|x| x.as_opt())
+            //     .and_then(|x| x.as_opt())
+            // {
+            //     for node in atlas_map.icon_map.iter().flat_map(|x| x.value.icons.iter())
+            // {         info!("{:?}, {:?}", node.key.get(), *node.value);
+            //     }
+            // }
 
             self.draw_egui(full_output, &image);
 
@@ -483,21 +508,88 @@ impl<M: EguiMenu> VulkanData<M> {
                 // },
                 // |ctx| self.menu.draw(ctx),
                 |ctx| {
-                    egui::Window::new("egui Test").scroll2(true).max_size([512.0, 512.0]).show(
+                    egui::Window::new("Test").resizable(true).max_size([1024.0, 1536.0]).show(
                         ctx,
                         |ui| unsafe {
                             ui.input(|i| SIZE = (SIZE * i.zoom_delta()).clamp(128.0, 4096.0));
-                            ui.add(egui::Slider::new(
-                                &mut SLIDER,
-                                0..=(DSC_SETS.lock().unwrap().len() - 1),
-                            ));
-                            // let (_, rect) = ui.allocate_space(ui.available_size());
-                            egui::ScrollArea::both().show(ui, |ui| {
-                                ui.image((
-                                    egui::TextureId::User(SLIDER as _),
-                                    egui::Vec2::new(SIZE, SIZE),
-                                ));
-                            })
+                            if let Some(atlases) = Globals::static_symbols()
+                                .ls__gTextureAtlasMap
+                                .and_then(|x| x.as_opt())
+                                .and_then(|x| x.as_opt())
+                                && let Some(item_manager) = Globals::static_symbols()
+                                    .ls__GlobalTemplateManager
+                                    .and_then(|x| x.as_opt())
+                                    .and_then(|x| x.as_opt())
+                                    .and_then(|x| x.global_template_bank().as_opt())
+                            {
+                                egui::ScrollArea::vertical()
+                                    .scroll_bar_visibility(
+                                        egui::scroll_area::ScrollBarVisibility::AlwaysVisible,
+                                    )
+                                    .show(ui, |ui| {
+                                        egui::Grid::new("textures")
+                                            .spacing([0.0, 0.0])
+                                            .max_col_width(256.0)
+                                            .show(ui, |ui| {
+                                                for (i, item) in item_manager
+                                                    .templates
+                                                    .iter()
+                                                    .filter_map(|x| {
+                                                        if let game_definitions::Template::Item(x) =
+                                                            x.value.as_ref().into()
+                                                        {
+                                                            return Some(x);
+                                                        }
+                                                        None
+                                                    })
+                                                    .take(1000)
+                                                    .enumerate()
+                                                {
+                                                    if let Some(atlas) = atlases
+                                                        .icon_map
+                                                        .iter()
+                                                        .find(|x| x.key == *item.icon)
+                                                        .map(|x| x.value)
+                                                        && let Some(uvs) = atlas
+                                                            .icons
+                                                            .iter()
+                                                            .find(|x| x.key == *item.icon)
+                                                            .map(|x| x.value)
+                                                    {
+                                                        egui::Frame::default().show(ui, |ui| {
+                                                            ui.add_sized(
+                                                                [64.0, 64.0],
+                                                                egui::Image::new((
+                                                                    egui::TextureId::User(
+                                                                        item.icon.index as _,
+                                                                    ),
+                                                                    egui::Vec2::new(64.0, 64.0),
+                                                                ))
+                                                                .uv([
+                                                                    [uvs.u1, uvs.v1].into(),
+                                                                    [uvs.u2, uvs.v2].into(),
+                                                                ]),
+                                                            );
+                                                        });
+                                                    }
+                                                    if ui
+                                                        .selectable_label(
+                                                            SELECTED == i,
+                                                            item.display_name
+                                                                .get()
+                                                                .as_deref()
+                                                                .unwrap_or(""),
+                                                        )
+                                                        .clicked()
+                                                    {
+                                                        SELECTED = i;
+                                                    }
+                                                    ui.end_row();
+                                                }
+                                            });
+                                        ui.allocate_space(ui.available_size());
+                                    });
+                            }
                         },
                     );
                 },
@@ -560,20 +652,152 @@ impl<M: EguiMenu> VulkanData<M> {
                                 &[],
                             );
                         }
-                        TextureId::User(_) => {
-                            let dsc_sets = DSC_SETS.lock().unwrap();
-                            if let Some(dsc_set) = unsafe { dsc_sets.get(SLIDER) } {
-                                self.dev.cmd_bind_descriptor_sets(
-                                    image.command_buffer,
-                                    vk::PipelineBindPoint::GRAPHICS,
-                                    self.pipeline_layout,
-                                    0,
-                                    &[*dsc_set],
-                                    &[],
-                                );
-                            } else {
-                                return;
+                        TextureId::User(id) => {
+                            if let Some(texture_manager) = Globals::static_symbols()
+                                .ls__gGlobalResourceManager
+                                .and_then(|x| x.as_opt())
+                                .and_then(|x| x.as_opt())
+                                .and_then(|x| x.texture_manager.as_opt())
+                                && let Some(atlases) = Globals::static_symbols()
+                                    .ls__gTextureAtlasMap
+                                    .and_then(|x| x.as_opt())
+                                    .and_then(|x| x.as_opt())
+                            {
+                                let fstring = FixedString { index: id as _ };
+                                let Some(atlas_fstring) = atlases
+                                    .icon_map
+                                    .iter()
+                                    .find(|x| x.key == fstring)
+                                    .map(|x| x.value.name)
+                                else {
+                                    return;
+                                };
+                                let atlas = atlas_fstring.index;
+
+                                if let Some(dsc_set) =
+                                    self.dsc_sets.get(&atlas).copied().or_else(|| {
+                                        // let view =
+                                        //     texture_manager.textures.find_index(&atlas_fstring)?;
+                                        let view = texture_manager
+                                            .textures
+                                            .iter()
+                                            .find(|x| *x.0 == atlas_fstring)?
+                                            .1
+                                            .image_views
+                                            .first()?
+                                            .view;
+
+                                        let dsc_set = self
+                                            .dev
+                                            .allocate_descriptor_sets(
+                                                &vk::DescriptorSetAllocateInfo::builder()
+                                                    .descriptor_pool(self.descriptor_pool)
+                                                    .set_layouts(&[self.descriptor_set_layout]),
+                                            )
+                                            .unwrap()[0];
+                                        self.dev.update_descriptor_sets(
+                                            &[*vk::WriteDescriptorSet::builder()
+                                                .dst_set(dsc_set)
+                                                .descriptor_type(
+                                                    vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+                                                )
+                                                .image_info(&[*vk::DescriptorImageInfo::builder(
+                                                )
+                                                .image_view(vk::ImageView::from_raw(view as _))
+                                                .image_layout(
+                                                    vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                                                )
+                                                .sampler(self.sampler)])],
+                                            &[],
+                                        );
+                                        self.dsc_sets.insert(atlas, dsc_set);
+                                        Some(dsc_set)
+                                    })
+                                {
+                                    self.dev.cmd_bind_descriptor_sets(
+                                        image.command_buffer,
+                                        vk::PipelineBindPoint::GRAPHICS,
+                                        self.pipeline_layout,
+                                        0,
+                                        &[dsc_set],
+                                        &[],
+                                    );
+                                } else {
+                                    return;
+                                }
                             }
+                            // if let Some(texture_manager) =
+                            // Globals::static_symbols()
+                            //     .ls__gGlobalResourceManager
+                            //     .and_then(|x| x.as_opt())
+                            //     .and_then(|x| x.as_opt())
+                            //     .and_then(|x| x.texture_manager.as_opt())
+                            // {
+                            //     let valid_views = texture_manager
+                            //         .texture_strings
+                            //         .iter()
+                            //         .filter(|(x, _)| !x.is_null())
+                            //         .flat_map(|(x, _)| x.image_views.iter())
+                            //         .filter(|x| x.view != 0)
+                            //         .collect::<Vec<_>>();
+                            //     let mut dsc_sets = DSC_SETS.lock().unwrap();
+                            //     if valid_views.len() != dsc_sets.len() {
+                            //         for dsc_set in dsc_sets.drain(..) {
+                            //             self.dev
+                            //
+                            // .free_descriptor_sets(self.descriptor_pool,
+                            // &[dsc_set])
+                            //                 .unwrap();
+                            //         }
+                            //
+                            //         for view in valid_views {
+                            //             let dsc_set = self
+                            //                 .dev
+                            //                 .allocate_descriptor_sets(
+                            //
+                            // &vk::DescriptorSetAllocateInfo::builder()
+                            //
+                            // .descriptor_pool(self.descriptor_pool)
+                            //
+                            // .set_layouts(&[self.descriptor_set_layout]),
+                            //                 )
+                            //                 .unwrap()[0];
+                            //             self.dev.update_descriptor_sets(
+                            //
+                            // &[*vk::WriteDescriptorSet::builder()
+                            //                     .dst_set(dsc_set)
+                            //                     .descriptor_type(
+                            //
+                            // vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+                            //                     )
+                            //
+                            // .image_info(&[*vk::DescriptorImageInfo::builder(
+                            //                     )
+                            //
+                            // .image_view(vk::ImageView::from_raw(view.view))
+                            //                     .image_layout(
+                            //
+                            // vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                            //                     )
+                            //                     .sampler(self.sampler)])],
+                            //                 &[],
+                            //             );
+                            //             dsc_sets.push(dsc_set);
+                            //         }
+                            //     }
+                            //
+                            //     if let Some(dsc_set) = dsc_sets.get(id as
+                            // usize) {
+                            //         self.dev.cmd_bind_descriptor_sets(
+                            //             image.command_buffer,
+                            //             vk::PipelineBindPoint::GRAPHICS,
+                            //             self.pipeline_layout,
+                            //             0,
+                            //             &[*dsc_set],
+                            //             &[],
+                            //         );
+                            //     }
+                            // }
                         }
                     }
 
@@ -630,31 +854,31 @@ impl<M: EguiMenu> VulkanData<M> {
             self.free_texture(id);
         }
 
-        let mut dsc_sets = DSC_SETS.lock().unwrap();
-        let views = ATLAS_VIEWS.lock().unwrap();
-        if dsc_sets.len() < views.len() {
-            for image_view in views.iter() {
-                let dsc_set = self
-                    .dev
-                    .allocate_descriptor_sets(
-                        &vk::DescriptorSetAllocateInfo::builder()
-                            .descriptor_pool(self.descriptor_pool)
-                            .set_layouts(&[self.descriptor_set_layout]),
-                    )
-                    .unwrap()[0];
-                self.dev.update_descriptor_sets(
-                    &[*vk::WriteDescriptorSet::builder()
-                        .dst_set(dsc_set)
-                        .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-                        .image_info(&[*vk::DescriptorImageInfo::builder()
-                            .image_view(*image_view)
-                            .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-                            .sampler(self.sampler)])],
-                    &[],
-                );
-                dsc_sets.push(dsc_set);
-            }
-        }
+        // let mut dsc_sets = DSC_SETS.lock().unwrap();
+        // let views = ATLAS_VIEWS.lock().unwrap();
+        // if dsc_sets.len() < views.len() {
+        //     for image_view in views.iter() {
+        //         let dsc_set = self
+        //             .dev
+        //             .allocate_descriptor_sets(
+        //                 &vk::DescriptorSetAllocateInfo::builder()
+        //                     .descriptor_pool(self.descriptor_pool)
+        //                     .set_layouts(&[self.descriptor_set_layout]),
+        //             )
+        //             .unwrap()[0];
+        //         self.dev.update_descriptor_sets(
+        //             &[*vk::WriteDescriptorSet::builder()
+        //                 .dst_set(dsc_set)
+        //                 .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+        //                 .image_info(&[*vk::DescriptorImageInfo::builder()
+        //                     .image_view(*image_view)
+        //                     .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+        //                     .sampler(self.sampler)])],
+        //             &[],
+        //         );
+        //         dsc_sets.push(dsc_set);
+        //     }
+        // }
 
         for (id, delta) in textures_delta.set {
             if delta.is_whole() {
@@ -882,6 +1106,7 @@ impl<M: EguiMenu> VulkanDataBuilder<M> {
                 vertex_buf,
 
                 textures: HashMap::new(),
+                dsc_sets: HashMap::new(),
 
                 descriptor_set_layout,
                 pipeline_layout,
@@ -985,15 +1210,12 @@ fn create_pipeline(
                 .color_blend_state(
                     &vk::PipelineColorBlendStateCreateInfo::builder().attachments(&[
                         *vk::PipelineColorBlendAttachmentState::builder()
-                            .color_write_mask(
-                                vk::ColorComponentFlags::R
-                                    | vk::ColorComponentFlags::G
-                                    | vk::ColorComponentFlags::B
-                                    | vk::ColorComponentFlags::A,
-                            )
+                            .color_write_mask(vk::ColorComponentFlags::RGBA)
                             .blend_enable(true)
-                            .src_color_blend_factor(vk::BlendFactor::ONE)
-                            .dst_color_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA),
+                            .src_color_blend_factor(vk::BlendFactor::SRC_ALPHA)
+                            .dst_color_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)
+                            .src_alpha_blend_factor(vk::BlendFactor::ONE)
+                            .dst_alpha_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA),
                     ]),
                 )
                 .dynamic_state(&dynamic_state_info)

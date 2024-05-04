@@ -530,9 +530,9 @@ pub(crate) struct TMapNode<K, V> {
 
 #[derive(Debug)]
 #[repr(C)]
-struct KeyValuePair<K, V> {
-    key: K,
-    value: V,
+pub(crate) struct KeyValuePair<K, V> {
+    pub key: K,
+    pub value: V,
 }
 
 #[derive(Debug)]

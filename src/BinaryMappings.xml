@@ -5,6 +5,15 @@
     <DllImport Module="Kernel32" Proc="FindNextFileW" Symbol="Kernel_FindNextFileW" />
     <DllImport Module="Kernel32" Proc="FindClose" Symbol="Kernel_FindClose" />
 
+    <Mapping Name="ls__TextureAtlasMap" Critical="true">
+      e8 ?? ?? ?? ??                     // call bg3.1433BE8F0
+      48 8b 53 20                        // mov rdx,qword ptr ds:[rbx+20]
+      @ref1 48 8b 0d ?? ?? ?? ??         // mov rcx,qword ptr ds:[ls__gTextureAtlasMap]
+      e8 ?? ?? ?? ??                     // call bg3.1433C08A0
+      48 8b 43 18                        // mov rax,qword ptr ds:[rbx+18]
+      <Target Type="Indirect" Offset="@ref1" Symbol="ls__gTextureAtlasMap" />
+    </Mapping>
+
     <Mapping Name="ls__GlobalAllocator" Critical="true">
           48 89 6c 24 18 // mov     [rsp+arg_10], rbp
           48 89 74 24 20 // mov     [rsp+arg_18], rsi
@@ -426,7 +435,7 @@
           83 f8 ff // cmp     eax, 0FFFFFFFFh
           <Target Type="Indirect" Offset="@ref1" Symbol="stats__DealDamageFunctor__ApplyDamage" />
         </Mapping>
-      
+
         <Mapping Name="App::Instance">
           @str1 48 8d 0d ?? ?? ?? ?? // lea     rcx, aCreatingApp; "Creating App\n"
           ff 15 ?? ?? ?? ?? // call    cs:OutputDebugStringA
@@ -465,7 +474,7 @@
           <Condition Type="FixedString" Offset="@str1" Value="ComboCategory" />
           <Target Type="Indirect" Offset="@ref2" Symbol="stats__Object__SetPropertyString" />
         </Mapping>
-      
+
       <!-- NOTE: Adjust LibraryManager::BindECSContext after changing this -->
       <Mapping Name="ecs::StaticContextRegistrant" AllowFail="true">
         @ref1 0f 11 05 ?? ?? ?? ?? // movups  cs:xmmword_145B2D7A0, xmm0
@@ -591,7 +600,7 @@
         5B // pop     rbx
         E9 ?? ?? ?? ?? // jmp     esv__StatusMachine__ApplyStatus
       </Mapping>
-      
+
         <Mapping Name="esv::SurfaceActionFactory::AddSurfaceAction" Scope="Custom">
             <Target Type="Indirect" Offset="6" Symbol="esv__SurfaceManager__AddAction" />
             49 8B D6 //  mov     rdx, r14
@@ -766,7 +775,7 @@
         <Target Type="Indirect" Offset="@ref1" Symbol="eoc__InterruptPrototypeManager" />
         <Target Type="Indirect" Offset="@ref2" Symbol="eoc__SpellPrototypeManager" />
       </Mapping>
-      
+
       <Mapping Name="eoc::PassivePrototype::Init" Scope="Custom">
         48 8b d3 // mov     rdx, rbx
         48 8b c8 // mov     rcx, rax
@@ -830,7 +839,7 @@
       <Condition Type="FixedString" Offset="@str1" Value="INSURFACE" />
       <Target Type="Indirect" Offset="@ref1" Symbol="eoc__StatusPrototype__Init" />
     </Mapping>
-      
+
       <Mapping Name="eoc::SpellPrototype::Init">
         49 8d 54 24 20 // lea     rdx, [r12+20h]
         49 8b cd // mov     rcx, r13
@@ -849,7 +858,7 @@
         <Condition Type="FixedString" Offset="@str1" Value="RootSpellID" />
         <Target Type="Indirect" Offset="@ref1" Symbol="eoc__SpellPrototype__Init" />
       </Mapping>
-      
+
       <Mapping Name="eoc::InterruptPrototype::Init">
         48 8b 4e 30 // mov     rcx, [rsi+30h]
         48 03 cf // add     rcx, rdi
@@ -863,7 +872,7 @@
         49 ff c4 // inc     r12
         <Target Type="Indirect" Offset="@ref1" Symbol="eoc__InterruptPrototype__Init" />
       </Mapping>
-      
+
       <Mapping Name="Noesis::SymbolManager">
         48 c1 e0 04 // shl     rax, 4
         48 03 05 ?? ?? ?? ?? // add     rax, cs:qword_14597F9A8
@@ -878,7 +887,7 @@
         3b c3 // cmp     eax, ebx
         <Target Type="Indirect" Offset="@ref1" Symbol="Noesis__SymbolManager__Buf1" />
       </Mapping>
-      
+
       <Mapping Name="Noesis::Reflection">
         40 53 // push    rbx
         48 83 ec 40 // sub     rsp, 40h
@@ -895,7 +904,7 @@
         66 0f 1f 44 00 00 // nop     word ptr [rax+rax+00h]
         <Target Type="Indirect" Offset="@ref1" Symbol="Noesis__gReflection" />
       </Mapping>
-      
+
       <Mapping Name="Noesis::UI::LoadXaml">
         48 83 ec 58 // sub     rsp, 58h
         48 8b f9 // mov     rdi, rcx
@@ -907,7 +916,7 @@
         <Condition Type="String" Offset="@str1" Value="MainCanvas.xaml" />
         <Target Type="Indirect" Offset="@ref1" Symbol="Noesis__GUI__LoadXaml" />
       </Mapping>
-      
+
       <Mapping Name="Noesis::Visual::AddVisualChild">
         48 8b 97 78 02 00 00 // mov     rdx, [rdi+278h]
         48 8b cf // mov     rcx, rdi
@@ -924,7 +933,7 @@
         <Target Type="Indirect" Offset="@ref1" Symbol="Noesis__Visual__RemoveVisualChild" />
         <Target Type="Indirect" Offset="@ref2" Symbol="Noesis__Visual__AddVisualChild" />
       </Mapping>
-      
+
       <Mapping Name="ls::UIStateMachine::FireStateEvent2">
         44 0f b7 03 // movzx   r8d, word ptr [rbx]
         @str1 48 8d 15 ?? ?? ?? ?? // lea     rdx, pfs_OpenTrade
@@ -938,8 +947,8 @@
         @ref3 e8 ?? ?? ?? ?? // call    ls__UIStateMachine__FireStateEvent2
         <Target Type="Indirect" Offset="@ref3" Symbol="ls__UIStateMachine__FireStateEvent2" />
       </Mapping>
-    
-    
+
+
 
       <!--
 

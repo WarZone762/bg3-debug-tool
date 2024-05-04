@@ -7,5 +7,9 @@ and more
 
 # Credits
 
-Norbyte and other [Baldur's Gate 3 Script Extender](https://github.com/Norbyte/bg3se) developers
-for the game's decompiled data
+Norbyte and other [Baldur's Gate 3 Script
+Extender](https://github.com/Norbyte/bg3se) developers for the game's
+decompiled data.
+
+Inspired by [Dark Souls III Practice
+Tool](https://github.com/veeenu/darksoulsiii-practice-tool) by veeenu

@@ -159,8 +159,8 @@ fn init() -> anyhow::Result<()> {
     if is_dx11 {
         hooks::dx11::init(menu)?;
     } else {
-        hooks::vulkan::init(menu)?;
-        // hooks::vulkan_egui::init(menu_new)?;
+        // hooks::vulkan::init(menu)?;
+        hooks::vulkan_egui::init(menu_new)?;
     }
 
     Ok(())

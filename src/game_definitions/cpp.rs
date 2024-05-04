@@ -62,9 +62,9 @@ impl Drop for STDStringOwned {
 
 #[repr(C)]
 pub(crate) struct STDString {
-    ptr_or_buf: PtrOrBuf,
-    size: u32,
-    capacity: u32,
+    pub ptr_or_buf: PtrOrBuf,
+    pub size: u32,
+    pub capacity: u32,
 }
 
 impl Debug for STDString {

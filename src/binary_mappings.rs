@@ -21,7 +21,8 @@ use crate::{
     err,
     game_definitions::{
         FixedString, GamePtr, GlobalTemplateManager, LSStringView, PassivePrototypeManager,
-        SpellPrototypeManager, StatusPrototypeManager, TranslatedStringRepository,
+        ResourceManager, SpellPrototypeManager, StatusPrototypeManager, TextureAtlasMap,
+        TranslatedStringRepository,
     },
     globals::Globals,
     warn,
@@ -311,7 +312,7 @@ static_symbols! {
     ls__GlobalAllocator__Free: fn(),
 
     eoc__gGuidResourceManager: *const (),
-    ls__gGlobalResourceManager: *const (),
+    ls__gGlobalResourceManager: GamePtr<GamePtr<ResourceManager>>,
 
     ls__VirtualTextureResource__Load: fn(),
     ls__VirtualTextureResource__Unload: fn(),
@@ -334,6 +335,8 @@ static_symbols! {
     Noesis__Visual__RemoveVisualChild: fn(),
     Noesis__Visual__AddVisualChild: fn(),
     ls__UIStateMachine__FireStateEvent2: *const(),
+
+    ls__gTextureAtlasMap: GamePtr<GamePtr<TextureAtlasMap>>,
 }
 
 unsafe fn asm_resolve_instruction_ref(insn: *const u8) -> Option<*const u8> {

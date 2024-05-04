@@ -1,3 +1,5 @@
+use std::ops::Deref;
+
 use super::{Array, GamePtr, StaticArray, UninitializedStaticArray};
 
 pub(crate) type Map<TKey, TValue> = MapInternals<TKey, TValue>;
@@ -96,6 +98,14 @@ impl<TKey: GameHash + Eq, TValue> MultiHashMap<TKey, TValue> {
     }
 }
 
+impl<K: GameHash + Eq, V> Deref for MultiHashMap<K, V> {
+    type Target = MultiHashSet<K>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.hash_set
+    }
+}
+
 #[derive(Debug)]
 #[repr(C)]
 pub(crate) struct MultiHashSet<T: GameHash + Eq> {
@@ -126,6 +136,10 @@ impl<T: GameHash + Eq> MultiHashSet<T> {
 
     pub fn iter_indecies(&self) -> impl Iterator<Item = u32> + '_ {
         self.hash_keys.iter().filter(|x| **x >= 0).map(|x| *x as u32)
+    }
+
+    pub fn len(&self) -> u32 {
+        self.keys.len() as _
     }
 }
 
