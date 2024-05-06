@@ -21,7 +21,11 @@ pub(crate) struct TextureAtlas {
     vptr: *const (),
     pub icons: Map<FixedString, GamePtr<UVValues>>,
     pub path: STDString,
-    unk: [u8; 40],
+    pub texture_path: STDString,
+    pub icon_width: u32,
+    pub icon_height: u32,
+    pub texture_width: u32,
+    pub texture_height: u32,
     pub name: FixedString,
     // pub uuid: FixedString,
 }

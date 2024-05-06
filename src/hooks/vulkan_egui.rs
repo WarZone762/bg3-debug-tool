@@ -676,13 +676,9 @@ impl<M: EguiMenu> VulkanData<M> {
 
                                 if let Some(dsc_set) =
                                     self.dsc_sets.get(&atlas).copied().or_else(|| {
-                                        // let view =
-                                        //     texture_manager.textures.find_index(&atlas_fstring)?;
                                         let view = texture_manager
-                                            .textures
-                                            .iter()
-                                            .find(|x| *x.0 == atlas_fstring)?
-                                            .1
+                                            .find(atlas_fstring)?
+                                            .vulkan
                                             .image_views
                                             .first()?
                                             .view;

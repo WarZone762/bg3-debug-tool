@@ -1,4 +1,9 @@
-use windows::Win32::System::Threading::{CRITICAL_SECTION, SRWLOCK};
+use std::{fmt::Debug, mem::ManuallyDrop};
+
+use windows::Win32::{
+    Graphics::Direct3D11::{ID3D11Resource, ID3D11ShaderResourceView},
+    System::Threading::{CRITICAL_SECTION, SRWLOCK},
+};
 
 use super::{Array, FixedString, GameHash, GamePtr, Map, MultiHashMap, RefMap, STDString};
 
@@ -37,23 +42,66 @@ pub(crate) struct ResourceManager {
 #[repr(C)]
 pub(crate) struct TextureManager {
     pub lock: SRWLOCK,
-    /// Keys are same as self.textures.values.views
     pub texture_strings: MultiHashMap<GamePtr<TextureDescriptor>, FixedString>,
-    pub textures: MultiHashMap<FixedString, GamePtr<GamePtr<TextureDescriptor>>>,
-    pad: [u8; 8],
+    pub textures: MultiHashMap<FixedString, GamePtr<Texture>>,
+}
+
+impl TextureManager {
+    pub fn find(&self, name: FixedString) -> Option<&TextureDescriptor> {
+        self.textures.try_get(&name)?.as_opt()?.descriptor.as_opt()
+    }
 }
 
 #[derive(Debug)]
 #[repr(C)]
-pub(crate) struct TextureDescriptor {
-    pub image_data: ImageData,
-    pub image_views: Array<GamePtr<ImageViewData>>,
+pub(crate) struct Texture {
+    descriptor: GamePtr<TextureDescriptor>,
+    unk: [u8; 16],
+    path: STDString,
+}
+
+#[repr(C)]
+pub(crate) union TextureDescriptor {
+    pub dx11: ManuallyDrop<TextureDescriptorDX11>,
+    pub vulkan: ManuallyDrop<TextureDescriptorVulkan>,
 }
 
 impl GameHash for GamePtr<TextureDescriptor> {
     fn hash(&self) -> u64 {
         self.as_usize() as _
     }
+}
+
+impl Debug for TextureDescriptor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("TextureDescriptor")
+    }
+}
+
+#[derive(Debug)]
+#[repr(C)]
+pub(crate) struct TextureDescriptorVulkan {
+    pub image_data: ImageData,
+    pub image_views: Array<GamePtr<ImageViewData>>,
+}
+
+#[derive(Debug)]
+#[repr(C)]
+pub(crate) struct TextureDescriptorDX11 {
+    resource: GamePtr<ID3D11Resource>,
+    unk_arr: Array<*const ()>,
+    width: u32,
+    height: u32,
+    depth: u32,
+    unk: [u8; 16],
+    views: Array<ResourceView>,
+}
+
+#[derive(Debug)]
+#[repr(C)]
+pub(crate) struct ResourceView {
+    unk: u64,
+    view: GamePtr<ID3D11ShaderResourceView>,
 }
 
 #[derive(Debug)]
