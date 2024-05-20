@@ -14,17 +14,15 @@ use windows::Win32::{
         },
         Shell::{DefSubclassProc, SetWindowSubclass},
         WindowsAndMessaging::{
-            EnumWindows, GetClientRect, GetForegroundWindow, GetWindow, IsWindowVisible, GW_OWNER,
-            KF_REPEAT, WHEEL_DELTA, WM_CHAR, WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDBLCLK,
-            WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDBLCLK, WM_MBUTTONDOWN, WM_MBUTTONUP,
-            WM_MOUSEHWHEEL, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_RBUTTONDBLCLK, WM_RBUTTONDOWN,
-            WM_RBUTTONUP, WM_SYSKEYDOWN, WM_SYSKEYUP, WM_XBUTTONDBLCLK, WM_XBUTTONDOWN,
-            WM_XBUTTONUP, XBUTTON1, XBUTTON2,
+            EnumWindows, GetClientRect, GetWindow, IsWindowVisible, GW_OWNER, KF_REPEAT,
+            WHEEL_DELTA, WM_CHAR, WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN,
+            WM_LBUTTONUP, WM_MBUTTONDBLCLK, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEHWHEEL,
+            WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_RBUTTONDBLCLK, WM_RBUTTONDOWN, WM_RBUTTONUP,
+            WM_SYSKEYDOWN, WM_SYSKEYUP, WM_XBUTTONDBLCLK, WM_XBUTTONDOWN, WM_XBUTTONUP, XBUTTON1,
+            XBUTTON2,
         },
     },
 };
-
-use crate::info;
 
 static INPUT_MANAGER: Mutex<InputManager> = Mutex::new(InputManager::new(HWND(0)));
 
@@ -114,18 +112,18 @@ impl InputManager {
                 title: None,
                 events: vec![],
                 native_pixels_per_point: Some(1.0),
-                monitor_size: Some(self.get_screen_size()),
-                inner_rect: Some(self.get_screen_rect()),
+                monitor_size: Some(self.screen_size()),
+                inner_rect: Some(self.screen_rect()),
                 outer_rect: None,
                 minimized: None,
                 maximized: None,
                 fullscreen: None,
                 focused: Some(true),
             })]),
-            screen_rect: Some(self.get_screen_rect()),
+            screen_rect: Some(self.screen_rect()),
             max_texture_side: None,
             time: None,
-            // time: Some(Self::get_system_time()?),
+            // time: Some(Self::system_time()?),
             predicted_dt: 1.0 / 60.0,
             modifiers: self.modifiers.unwrap_or_default(),
             events: mem::take(&mut self.events),
@@ -138,17 +136,17 @@ impl InputManager {
     pub fn process(&mut self, umsg: u32, wparam: usize, lparam: isize) -> InputResult {
         match umsg {
             WM_MOUSEMOVE => {
-                self.alter_modifiers(get_mouse_modifiers(wparam));
+                self.alter_modifiers(to_mouse_modifiers(wparam));
 
-                self.events.push(Event::PointerMoved(get_pos(lparam)));
+                self.events.push(Event::PointerMoved(to_pos(lparam)));
                 InputResult::MouseMove
             }
             WM_LBUTTONDOWN | WM_LBUTTONDBLCLK => {
-                let modifiers = get_mouse_modifiers(wparam);
+                let modifiers = to_mouse_modifiers(wparam);
                 self.alter_modifiers(modifiers);
 
                 self.events.push(Event::PointerButton {
-                    pos: get_pos(lparam),
+                    pos: to_pos(lparam),
                     button: PointerButton::Primary,
                     pressed: true,
                     modifiers,
@@ -156,11 +154,11 @@ impl InputManager {
                 InputResult::MouseLeft
             }
             WM_LBUTTONUP => {
-                let modifiers = get_mouse_modifiers(wparam);
+                let modifiers = to_mouse_modifiers(wparam);
                 self.alter_modifiers(modifiers);
 
                 self.events.push(Event::PointerButton {
-                    pos: get_pos(lparam),
+                    pos: to_pos(lparam),
                     button: PointerButton::Primary,
                     pressed: false,
                     modifiers,
@@ -168,11 +166,11 @@ impl InputManager {
                 InputResult::MouseLeft
             }
             WM_RBUTTONDOWN | WM_RBUTTONDBLCLK => {
-                let modifiers = get_mouse_modifiers(wparam);
+                let modifiers = to_mouse_modifiers(wparam);
                 self.alter_modifiers(modifiers);
 
                 self.events.push(Event::PointerButton {
-                    pos: get_pos(lparam),
+                    pos: to_pos(lparam),
                     button: PointerButton::Secondary,
                     pressed: true,
                     modifiers,
@@ -180,11 +178,11 @@ impl InputManager {
                 InputResult::MouseRight
             }
             WM_RBUTTONUP => {
-                let modifiers = get_mouse_modifiers(wparam);
+                let modifiers = to_mouse_modifiers(wparam);
                 self.alter_modifiers(modifiers);
 
                 self.events.push(Event::PointerButton {
-                    pos: get_pos(lparam),
+                    pos: to_pos(lparam),
                     button: PointerButton::Secondary,
                     pressed: false,
                     modifiers,
@@ -192,11 +190,11 @@ impl InputManager {
                 InputResult::MouseRight
             }
             WM_MBUTTONDOWN | WM_MBUTTONDBLCLK => {
-                let modifiers = get_mouse_modifiers(wparam);
+                let modifiers = to_mouse_modifiers(wparam);
                 self.alter_modifiers(modifiers);
 
                 self.events.push(Event::PointerButton {
-                    pos: get_pos(lparam),
+                    pos: to_pos(lparam),
                     button: PointerButton::Middle,
                     pressed: true,
                     modifiers,
@@ -204,11 +202,11 @@ impl InputManager {
                 InputResult::MouseMiddle
             }
             WM_MBUTTONUP => {
-                let modifiers = get_mouse_modifiers(wparam);
+                let modifiers = to_mouse_modifiers(wparam);
                 self.alter_modifiers(modifiers);
 
                 self.events.push(Event::PointerButton {
-                    pos: get_pos(lparam),
+                    pos: to_pos(lparam),
                     button: PointerButton::Middle,
                     pressed: false,
                     modifiers,
@@ -216,11 +214,11 @@ impl InputManager {
                 InputResult::MouseMiddle
             }
             WM_XBUTTONDOWN | WM_XBUTTONDBLCLK => {
-                let modifiers = get_mouse_modifiers(wparam);
+                let modifiers = to_mouse_modifiers(wparam);
                 self.alter_modifiers(modifiers);
 
                 self.events.push(Event::PointerButton {
-                    pos: get_pos(lparam),
+                    pos: to_pos(lparam),
                     button: if (wparam as u32) >> 16 & (XBUTTON1 as u32) != 0 {
                         PointerButton::Extra1
                     } else if (wparam as u32) >> 16 & (XBUTTON2 as u32) != 0 {
@@ -234,11 +232,11 @@ impl InputManager {
                 InputResult::MouseMiddle
             }
             WM_XBUTTONUP => {
-                let modifiers = get_mouse_modifiers(wparam);
+                let modifiers = to_mouse_modifiers(wparam);
                 self.alter_modifiers(modifiers);
 
                 self.events.push(Event::PointerButton {
-                    pos: get_pos(lparam),
+                    pos: to_pos(lparam),
                     button: if (wparam as u32) >> 16 & (XBUTTON1 as u32) != 0 {
                         PointerButton::Extra1
                     } else if (wparam as u32) >> 16 & (XBUTTON2 as u32) != 0 {
@@ -260,7 +258,7 @@ impl InputManager {
                 InputResult::Character
             }
             WM_MOUSEWHEEL => {
-                self.alter_modifiers(get_mouse_modifiers(wparam));
+                self.alter_modifiers(to_mouse_modifiers(wparam));
 
                 let delta = (wparam >> 16) as i16 as f32 * 10. / WHEEL_DELTA as f32;
 
@@ -273,7 +271,7 @@ impl InputManager {
                 }
             }
             WM_MOUSEHWHEEL => {
-                self.alter_modifiers(get_mouse_modifiers(wparam));
+                self.alter_modifiers(to_mouse_modifiers(wparam));
 
                 let delta = (wparam >> 16) as i16 as f32 * 10. / WHEEL_DELTA as f32;
 
@@ -286,12 +284,12 @@ impl InputManager {
                 }
             }
             msg @ (WM_KEYDOWN | WM_SYSKEYDOWN) => {
-                let modifiers = get_key_modifiers(msg);
+                let modifiers = to_key_modifiers(msg);
                 self.modifiers = Some(modifiers);
 
-                if let Some(key) = get_key(wparam) {
+                if let Some(key) = to_key(wparam) {
                     if key == Key::V && modifiers.ctrl {
-                        // if let Some(clipboard) = get_clipboard_text() {
+                        // if let Some(clipboard) = clipboard_text() {
                         //     self.events.push(Event::Text(clipboard));
                         // }
                     }
@@ -315,10 +313,10 @@ impl InputManager {
                 InputResult::Key
             }
             msg @ (WM_KEYUP | WM_SYSKEYUP) => {
-                let modifiers = get_key_modifiers(msg);
+                let modifiers = to_key_modifiers(msg);
                 self.modifiers = Some(modifiers);
 
-                if let Some(key) = get_key(wparam) {
+                if let Some(key) = to_key(wparam) {
                     self.events.push(Event::Key {
                         key,
                         physical_key: None,
@@ -339,39 +337,39 @@ impl InputManager {
         }
     }
 
-    // pub fn get_system_time() -> Result<f64> {
+    // pub fn system_time() -> Result<f64> {
     //     let mut time = 0;
     //     unsafe {
     //         NtQuerySystemTime(&mut time)?;
     //     }
     //
-    //     Ok((time as f64) / 10_000_000.)
+    //     Ok((time as f64) / 10_000_000.0)
     // }
 
     #[inline]
-    pub fn get_screen_size(&self) -> Vec2 {
+    pub fn screen_size(&self) -> Vec2 {
         let mut rect = RECT::default();
         unsafe {
-            GetClientRect(self.hwnd, &mut rect);
+            GetClientRect(self.hwnd, &mut rect).unwrap();
         }
 
         Vec2::new((rect.right - rect.left) as _, (rect.bottom - rect.top) as _)
     }
 
     #[inline]
-    pub fn get_screen_rect(&self) -> Rect {
-        Rect { min: Pos2::ZERO, max: self.get_screen_size().to_pos2() }
+    pub fn screen_rect(&self) -> Rect {
+        Rect { min: Pos2::ZERO, max: self.screen_size().to_pos2() }
     }
 }
 
-fn get_pos(lparam: isize) -> Pos2 {
+fn to_pos(lparam: isize) -> Pos2 {
     let x = (lparam & 0xFFFF) as i16 as f32;
     let y = (lparam >> 16 & 0xFFFF) as i16 as f32;
 
     Pos2::new(x, y)
 }
 
-fn get_mouse_modifiers(wparam: usize) -> Modifiers {
+fn to_mouse_modifiers(wparam: usize) -> Modifiers {
     Modifiers {
         alt: false,
         ctrl: (wparam & MK_CONTROL.0 as usize) != 0,
@@ -381,14 +379,14 @@ fn get_mouse_modifiers(wparam: usize) -> Modifiers {
     }
 }
 
-fn get_key_modifiers(msg: u32) -> Modifiers {
+fn to_key_modifiers(msg: u32) -> Modifiers {
     let ctrl = unsafe { GetAsyncKeyState(VK_CONTROL.0 as _) != 0 };
     let shift = unsafe { GetAsyncKeyState(VK_LSHIFT.0 as _) != 0 };
 
     Modifiers { alt: msg == WM_SYSKEYDOWN, mac_cmd: false, command: ctrl, shift, ctrl }
 }
 
-fn get_key(wparam: usize) -> Option<Key> {
+fn to_key(wparam: usize) -> Option<Key> {
     match wparam {
         0x30..=0x39 => unsafe { Some(std::mem::transmute::<_, Key>(wparam as u8 - 0x1F)) },
         0x41..=0x5A => unsafe { Some(std::mem::transmute::<_, Key>(wparam as u8 - 0x26)) },
@@ -414,6 +412,6 @@ fn get_key(wparam: usize) -> Option<Key> {
     }
 }
 
-// fn get_clipboard_text() -> Option<String> {
+// fn clipboard_text() -> Option<String> {
 //     clipboard_win::get_clipboard(clipboard_win::formats::Unicode).ok()
 // }

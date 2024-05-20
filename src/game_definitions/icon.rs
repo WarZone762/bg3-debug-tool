@@ -8,6 +8,12 @@ pub(crate) struct TextureAtlasMap {
     pub icon_map: Map<FixedString, GamePtr<TextureAtlas>>,
 }
 
+impl TextureAtlasMap {
+    pub fn find_atlas(&self, key: FixedString) -> Option<&TextureAtlas> {
+        Some(self.icon_map.iter().find(|x| x.key == key)?.value.as_ref())
+    }
+}
+
 /// FIXME: figure out hash for STDString
 impl GameHash for STDString {
     fn hash(&self) -> u64 {

@@ -1,163 +1,66 @@
 use std::{
-    collections::{hash_map, HashMap},
-    mem,
-    ops::Deref,
-    ptr,
+    collections::HashMap,
+    mem::{self, ManuallyDrop},
+    ptr::NonNull,
     sync::Mutex,
 };
 
 use ash::vk::{self, Handle};
 use egui::{
     epaint::{self, Primitive},
-    Context, FullOutput, ImageData, Pos2, TextureId, TexturesDelta,
+    Context, FullOutput, ImageData, TextureId, TexturesDelta,
 };
 
 use crate::{
-    game_definitions::{self, FixedString},
+    game_definitions::FixedString,
     globals::Globals,
     hook_definitions,
     hooks::detour,
-    info,
     menu::{egui_backend_win32, egui_vulkan::EguiMenu},
 };
 
-static mut DATA: Mutex<Option<VulkanData<Box<dyn EguiMenu>>>> = Mutex::new(None);
-static mut DATA_BUILDER: Mutex<VulkanDataBuilder<Box<dyn EguiMenu>>> =
-    Mutex::new(VulkanDataBuilder::new());
+fn instance() -> &'static ash::Instance {
+    unsafe { INSTANCE.as_ref().unwrap_unchecked() }
+}
+
+fn physical_dev() -> vk::PhysicalDevice {
+    unsafe { PHYSICAL_DEV.unwrap_unchecked() }
+}
+
+fn dev() -> &'static ash::Device {
+    unsafe { DEV.as_ref().unwrap_unchecked() }
+}
+
+fn allocator() -> &'static Allocator {
+    unsafe { ALLOCATOR.as_ref().unwrap_unchecked() }
+}
+
+fn menu() -> &'static mut dyn EguiMenu {
+    unsafe { MENU.as_mut().unwrap_unchecked() }
+}
+
+fn data() -> &'static VkData {
+    unsafe { DATA.get_mut().unwrap().as_ref().unwrap_unchecked() }
+}
+
+static mut INSTANCE: Option<ash::Instance> = None;
+static mut PHYSICAL_DEV: Option<vk::PhysicalDevice> = None;
+static mut DEV: Option<ash::Device> = None;
+static mut PIPELINE_CACHE: vk::PipelineCache = vk::PipelineCache::null();
+static mut ALLOCATOR: Option<Allocator> = None;
+static mut MENU: Option<Box<dyn EguiMenu>> = None;
+
+static mut DATA: Mutex<Option<VkData>> = Mutex::new(None);
 
 pub(crate) fn init(menu: impl EguiMenu + 'static) -> anyhow::Result<()> {
     unsafe {
-        DATA_BUILDER.lock().unwrap().menu = Some(Box::new(menu));
+        MENU = Some(Box::new(menu));
     }
     hook()
 }
 
-static ATLASES: Mutex<Vec<vk::Image>> = Mutex::new(Vec::new());
-static ATLAS_VIEWS: Mutex<Vec<vk::ImageView>> = Mutex::new(Vec::new());
-static DSC_SETS: Mutex<Vec<vk::DescriptorSet>> = Mutex::new(Vec::new());
-static mut SLIDER: usize = 0;
-static mut SELECTED: usize = 0;
-static mut SIZE: f32 = 512.0;
-
 hook_definitions! {
 vulkan("vulkan-1.dll") {
-    #[no_init = yes]
-    fn vkUpdateDescriptorSets(
-        device: vk::Device,
-        descriptor_write_count: u32,
-        p_descriptor_writes: *const vk::WriteDescriptorSet,
-        descriptor_copy_count: u32,
-        p_descriptor_copies: *const vk::CopyDescriptorSet,
-    ) -> vk::Result {
-        // info!("upd dsc sets, writes: {descriptor_write_count}, copies: {descriptor_copy_count}");
-        // unsafe {
-        //     let views = ATLAS_VIEWS.lock().unwrap();
-        //     let mut dsc_sets = DSC_SETS.lock().unwrap();
-        //     for i in 0..descriptor_write_count {
-        //         let writes = *p_descriptor_writes.add(i as _);
-        //         // info!("set: {:?}", writes.dst_set);
-        //         // info!("binding: {}", writes.dst_binding);
-        //         // info!("array element: {}", writes.dst_array_element);
-        //         // info!("count: {}", writes.descriptor_count);
-        //         // info!("type: {:?}", writes.descriptor_type);
-        //         if !writes.p_image_info.is_null()
-        //             // && writes.descriptor_type == vk::DescriptorType::COMBINED_IMAGE_SAMPLER
-        //         {
-        //             for j in 0..writes.descriptor_count {
-        //                 let info = *writes.p_image_info.add(j as _);
-        //                 if /* info.image_layout == vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL && */
-        //                     views.iter().any(|x| *x == info.image_view)
-        //                 {
-        //                     // std::intrinsics::breakpoint();
-        //                     info!("texture atlas descriptor set: {:?}", writes.dst_set);
-        //                     dsc_sets.push(writes.dst_set);
-        //                 }
-        //                 // info!("image sampler: {:?}", info.sampler);
-        //                 // info!("image view: {:?}", info.image_view);
-        //                 // info!("image layout: {:?}", info.image_layout);
-        //             }
-        //         }
-        //         // if !writes.p_buffer_info.is_null() {
-        //         //     for j in 0..writes.descriptor_count {
-        //         //         let info = *writes.p_buffer_info.add(j as _);
-        //         //         info!("buffer: {:?}", info.buffer);
-        //         //         info!("buffer range: {}", info.range);
-        //         //         info!("buffer offset: {}", info.offset);
-        //         //     }
-        //         // }
-        //         // if !writes.p_texel_buffer_view.is_null() {
-        //         //     for j in 0..writes.descriptor_count {
-        //         //         info!("buffer view: {:?}", (*writes.p_texel_buffer_view.add(j as _)));
-        //         //     }
-        //         // }
-        //     }
-        // }
-
-        original::vkUpdateDescriptorSets(
-            device,
-            descriptor_write_count,
-            p_descriptor_writes,
-            descriptor_copy_count,
-            p_descriptor_copies,
-        )
-    }
-
-    #[no_init = yes]
-    fn vkCreateImage(
-        device: vk::Device,
-        p_create_info: *const vk::ImageCreateInfo,
-        p_allocator: *const vk::AllocationCallbacks,
-        p_image: *mut vk::Image
-    ) -> vk::Result {
-        let res = original::vkCreateImage(device, p_create_info, p_allocator, p_image);
-        unsafe {
-            let info = *p_create_info;
-            if info.image_type == vk::ImageType::TYPE_2D
-                && info.format == vk::Format::BC3_UNORM_BLOCK
-                && info.samples == vk::SampleCountFlags::TYPE_1
-                && info.tiling == vk::ImageTiling::OPTIMAL
-                && info.usage == (
-                    vk::ImageUsageFlags::TRANSFER_SRC
-                    | vk::ImageUsageFlags::TRANSFER_DST
-                    | vk::ImageUsageFlags::SAMPLED
-                )
-                && info.sharing_mode == vk::SharingMode::CONCURRENT
-                && info.initial_layout == vk::ImageLayout::UNDEFINED
-                && info.extent.width == 2048
-                && info.extent.height == 2048
-                && info.extent.depth == 1
-            {
-                // std::intrinsics::breakpoint();
-                // ATLASES.lock().unwrap().push(*p_image);
-                // info!("possible texture atlas: {:?}", *p_image);
-            }
-        }
-
-        res
-    }
-
-    #[no_init = yes]
-    fn vkCreateImageView(
-        device: vk::Device,
-        p_create_info: *const vk::ImageViewCreateInfo,
-        p_allocator: *const vk::AllocationCallbacks,
-        p_image_view: *mut vk::ImageView
-    ) -> vk::Result {
-        let res = original::vkCreateImageView(device, p_create_info, p_allocator, p_image_view);
-        // unsafe {
-        //     let info = *p_create_info;
-        //     let atlases = ATLASES.lock().unwrap();
-        //     if atlases.iter().any(|x| *x == info.image) {
-        //         ATLAS_VIEWS.lock().unwrap().push(*p_image_view);
-        //     }
-        // }
-        // unsafe {
-        //     std::intrinsics::breakpoint();
-        // }
-
-        res
-    }
-
     fn vkCreateInstance(
         p_create_info: *mut vk::InstanceCreateInfo,
         p_allocator: *const vk::AllocationCallbacks,
@@ -174,11 +77,7 @@ vulkan("vulkan-1.dll") {
             )
         };
         unsafe {
-            if let Some(vk_data) = DATA.lock().unwrap().as_mut() {
-                vk_data.instance = instance;
-            } else {
-                DATA_BUILDER.lock().unwrap().instance = Some(instance);
-            }
+            INSTANCE = Some(instance);
         }
 
         res
@@ -198,98 +97,32 @@ vulkan("vulkan-1.dll") {
         );
 
         unsafe {
-            if let Some(vk_data) = DATA.lock().unwrap().as_mut() {
-                vk_data.physical_dev = physical_device;
-                vk_data.dev = ash::Device::load(vk_data.instance.fp_v1_0(), *p_device);
+            PHYSICAL_DEV = Some(physical_device);
+            ALLOCATOR = Some(Allocator::new());
+            DEV = Some(ash::Device::load(instance().fp_v1_0(), *p_device));
 
-                let families = vk_data
-                    .instance
-                    .get_physical_device_queue_family_properties(
-                        vk_data.physical_dev
-                    );
+            let create_pipeline_cache = instance()
+                .get_device_proc_addr(*p_device, c"vkCreatePipelineCache".as_ptr())
+                .unwrap();
+            let create_swapchain = instance()
+                .get_device_proc_addr(*p_device, c"vkCreateSwapchainKHR".as_ptr())
+                .unwrap();
+            let queue_present = instance()
+                .get_device_proc_addr(*p_device, c"vkQueuePresentKHR".as_ptr())
+                .unwrap();
 
-                vk_data.queue_family = families
-                    .iter()
-                    .position(|x| x.queue_flags.contains(vk::QueueFlags::GRAPHICS))
-                    .unwrap() as _;
-
-                let create_pipeline_cache = vk_data
-                    .instance
-                    .get_device_proc_addr(*p_device, c"vkCreatePipelineCache".as_ptr())
-                    .unwrap();
-                let create_swapchain = vk_data
-                    .instance
-                    .get_device_proc_addr(*p_device, c"vkCreateSwapchainKHR".as_ptr())
-                    .unwrap();
-                let queue_present = vk_data
-                    .instance
-                    .get_device_proc_addr(*p_device, c"vkQueuePresentKHR".as_ptr())
-                    .unwrap();
-
+            if HOOKS.vkQueuePresentKHR.is_attached() {
                 detour(|| {
                     HOOKS.vkCreatePipelineCache.detach();
                     HOOKS.vkCreateSwapchainKHR.detach();
                     HOOKS.vkQueuePresentKHR.detach();
                 });
-                detour(|| {
-                    HOOKS.vkCreatePipelineCache.attach(create_pipeline_cache as _);
-                    HOOKS.vkCreateSwapchainKHR.attach(create_swapchain as _);
-                    HOOKS.vkQueuePresentKHR.attach(queue_present as _);
-                });
-            } else {
-                let mut builder = DATA_BUILDER.lock().unwrap();
-                builder.physical_dev = Some(physical_device);
-                builder.dev = Some(ash::Device::load(builder.instance().fp_v1_0(), *p_device));
-
-                let families = builder
-                    .instance()
-                    .get_physical_device_queue_family_properties(
-                        builder.physical_dev.unwrap()
-                    );
-
-                builder.queue_family = Some(
-                    families
-                        .iter()
-                        .position(|x| x.queue_flags.contains(vk::QueueFlags::GRAPHICS))
-                        .unwrap() as _,
-                    );
-
-                let create_pipeline_cache = builder
-                    .instance()
-                    .get_device_proc_addr(*p_device, c"vkCreatePipelineCache".as_ptr())
-                    .unwrap();
-                let create_swapchain = builder
-                    .instance()
-                    .get_device_proc_addr(*p_device, c"vkCreateSwapchainKHR".as_ptr())
-                    .unwrap();
-                let queue_present = builder
-                    .instance()
-                    .get_device_proc_addr(*p_device, c"vkQueuePresentKHR".as_ptr())
-                    .unwrap();
-
-                let upd_dsc_set = builder
-                    .instance()
-                    .get_device_proc_addr(*p_device, c"vkUpdateDescriptorSets".as_ptr())
-                    .unwrap();
-                let create_image = builder
-                    .instance()
-                    .get_device_proc_addr(*p_device, c"vkCreateImage".as_ptr())
-                    .unwrap();
-                let create_image_view = builder
-                    .instance()
-                    .get_device_proc_addr(*p_device, c"vkCreateImageView".as_ptr())
-                    .unwrap();
-
-                detour(|| {
-                    HOOKS.vkCreatePipelineCache.attach(create_pipeline_cache as _);
-                    HOOKS.vkCreateSwapchainKHR.attach(create_swapchain as _);
-                    HOOKS.vkQueuePresentKHR.attach(queue_present as _);
-
-                    HOOKS.vkUpdateDescriptorSets.attach(upd_dsc_set as _);
-                    HOOKS.vkCreateImage.attach(create_image as _);
-                    HOOKS.vkCreateImageView.attach(create_image_view as _);
-                });
             }
+            detour(|| {
+                HOOKS.vkCreatePipelineCache.attach(create_pipeline_cache as _);
+                HOOKS.vkCreateSwapchainKHR.attach(create_swapchain as _);
+                HOOKS.vkQueuePresentKHR.attach(queue_present as _);
+            });
         }
 
         res
@@ -310,11 +143,7 @@ vulkan("vulkan-1.dll") {
         );
 
         unsafe {
-            if let Some(vk_data) = DATA.lock().unwrap().as_mut() {
-                vk_data.pipeline_cache = *p_pipeline_cache
-            } else {
-                DATA_BUILDER.lock().unwrap().pipeline_cache = Some(*p_pipeline_cache);
-            }
+            PIPELINE_CACHE = *p_pipeline_cache;
         }
 
         res
@@ -337,28 +166,14 @@ vulkan("vulkan-1.dll") {
         unsafe {
             let mut vk_data = DATA.lock().unwrap();
             if let Some(vk_data) = vk_data.as_mut() {
-                let old = mem::replace(
-                    &mut vk_data.swapchain_data,
-                    SwapchainData::new(
-                        *p_swapchain,
-                        &*p_create_info,
-                        &vk_data.instance,
-                        &vk_data.dev,
-                        vk_data.queue_family,
-                    )
-                );
-                old.destroy(&vk_data.dev);
-            } else {
-                let mut builder = DATA_BUILDER.lock().unwrap();
-                builder.swapchain_data = Some(SwapchainData::new(
+                vk_data.swapchain_data = ManuallyDrop::new(SwapchainData::new(
                     *p_swapchain,
                     &*p_create_info,
-                    builder.instance(),
-                    builder.dev.as_ref().unwrap(),
-                    builder.queue_family.unwrap(),
+                    vk_data.cmd_pool,
+                    vk_data.textures.dsc_set_layout,
                 ));
-
-                *vk_data = Some(builder.build());
+            } else {
+                *vk_data = Some(VkData::new(*p_swapchain, &*p_create_info));
             }
         }
 
@@ -381,869 +196,190 @@ vulkan("vulkan-1.dll") {
 }
 }
 
-pub(crate) struct VulkanData<M: EguiMenu> {
-    instance: ash::Instance,
-    physical_dev: vk::PhysicalDevice,
-    dev: ash::Device,
-    queue_family: u32,
+pub(crate) struct VkData {
     queue: vk::Queue,
-    pipeline_cache: vk::PipelineCache,
-    descriptor_pool: vk::DescriptorPool,
-    swapchain_data: SwapchainData,
-
-    menu: M,
-
+    cmd_pool: vk::CommandPool,
+    swapchain_data: ManuallyDrop<SwapchainData>,
+    textures: Textures,
     ctx: Context,
-    allocator: Allocator,
-    index_buf: Buffer,
-    vertex_buf: Buffer,
-
-    pipeline: vk::Pipeline,
-    pipeline_layout: vk::PipelineLayout,
-
-    textures: HashMap<TextureId, (vk::DescriptorSet, Texture)>,
-    dsc_sets: HashMap<u32, vk::DescriptorSet>,
-
-    descriptor_set_layout: vk::DescriptorSetLayout,
-    sampler: vk::Sampler,
 }
 
-impl<M: EguiMenu> VulkanData<M> {
-    fn present(&mut self, present_info: &mut vk::PresentInfoKHR) {
-        unsafe {
-            if present_info.swapchain_count != 1
-                || *present_info.p_swapchains != self.swapchain_data.swapchain
-            {
-                return;
-            }
+impl VkData {
+    pub unsafe fn new(
+        swapchain: vk::SwapchainKHR,
+        swapchain_create_info: &vk::SwapchainCreateInfoKHR,
+    ) -> Self {
+        let ctx = Context::default();
+        // menu.init(&mut ctx, &mut dev);
+        egui_backend_win32::init();
 
-            let full_output = self.egui_run();
+        let families = instance().get_physical_device_queue_family_properties(physical_dev());
 
-            let image = self.swapchain_data.images[*present_info.p_image_indices as usize];
-            self.dev.wait_for_fences(&[image.fence], true, u64::MAX).unwrap();
-            self.dev.reset_fences(&[image.fence]).unwrap();
-            self.dev
-                .reset_command_buffer(image.command_buffer, vk::CommandBufferResetFlags::empty())
-                .unwrap();
-
-            self.dev
-                .begin_command_buffer(
-                    image.command_buffer,
-                    &vk::CommandBufferBeginInfo::builder()
-                        .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT),
-                )
-                .unwrap();
-
-            let info = vk::RenderPassBeginInfo::builder()
-                .render_pass(self.swapchain_data.render_pass)
-                .framebuffer(image.framebuffer)
-                .render_area(*vk::Rect2D::builder().extent(self.swapchain_data.extent))
-                .clear_values(&[]);
-            self.dev.cmd_begin_render_pass(
-                image.command_buffer,
-                &info,
-                vk::SubpassContents::INLINE,
-            );
-
-            // if let Some(atlas_map) = Globals::static_symbols()
-            //     .ls__gTextureAtlasMap
-            //     .and_then(|x| x.as_opt())
-            //     .and_then(|x| x.as_opt())
-            // {
-            //     for node in atlas_map.icon_map.iter().flat_map(|x| x.value.icons.iter())
-            // {         info!("{:?}, {:?}", node.key.get(), *node.value);
-            //     }
-            // }
-
-            self.draw_egui(full_output, &image);
-
-            self.dev.cmd_end_render_pass(image.command_buffer);
-            self.dev.end_command_buffer(image.command_buffer).unwrap();
-
-            let signal_semaphores = [image.semaphore];
-            let command_buffers = [image.command_buffer];
-            let mut submit_info = vk::SubmitInfo::builder()
-                .command_buffers(&command_buffers)
-                .wait_dst_stage_mask(&[
-                    vk::PipelineStageFlags::ALL_COMMANDS,
-                    vk::PipelineStageFlags::ALL_COMMANDS,
-                    vk::PipelineStageFlags::ALL_COMMANDS,
-                ])
-                .signal_semaphores(&signal_semaphores);
-            submit_info.wait_semaphore_count = present_info.wait_semaphore_count;
-            submit_info.p_wait_semaphores = present_info.p_wait_semaphores;
-
-            self.dev.queue_submit(self.queue, &[*submit_info], image.fence).unwrap();
-
-            *(present_info.p_wait_semaphores as *mut _) = *submit_info.p_signal_semaphores;
-            present_info.wait_semaphore_count = 1;
-        }
-    }
-
-    fn egui_run(&mut self) -> FullOutput {
-        if let Ok(input) = egui_backend_win32::new_frame() {
-            self.ctx.run(
-                input,
-                // egui::RawInput {
-                //     focused: true,
-                //     screen_rect: Some(egui::Rect::from_min_size(
-                //         Default::default(),
-                //         [1920.0, 1080.0].into(),
-                //     )),
-                //     viewport_id: egui::ViewportId::ROOT,
-                //     viewports: HashMap::from_iter([(egui::ViewportId::ROOT, egui::ViewportInfo {
-                //         focused: Some(true),
-                //         inner_rect: Some(egui::Rect::from_min_size(
-                //             Default::default(),
-                //             [1920.0, 1080.0].into(),
-                //         )),
-                //         outer_rect: Some(egui::Rect::from_min_size(
-                //             Default::default(),
-                //             [1920.0, 1080.0].into(),
-                //         )),
-                //         monitor_size: Some([1920.0, 1080.0].into()),
-                //         ..Default::default()
-                //     })]),
-                //     ..Default::default()
-                // },
-                // |ctx| self.menu.draw(ctx),
-                |ctx| {
-                    egui::Window::new("Test").resizable(true).max_size([1024.0, 1536.0]).show(
-                        ctx,
-                        |ui| unsafe {
-                            ui.input(|i| SIZE = (SIZE * i.zoom_delta()).clamp(128.0, 4096.0));
-                            if let Some(atlases) = Globals::static_symbols()
-                                .ls__gTextureAtlasMap
-                                .and_then(|x| x.as_opt())
-                                .and_then(|x| x.as_opt())
-                                && let Some(item_manager) = Globals::static_symbols()
-                                    .ls__GlobalTemplateManager
-                                    .and_then(|x| x.as_opt())
-                                    .and_then(|x| x.as_opt())
-                                    .and_then(|x| x.global_template_bank().as_opt())
-                            {
-                                egui::ScrollArea::vertical()
-                                    .scroll_bar_visibility(
-                                        egui::scroll_area::ScrollBarVisibility::AlwaysVisible,
-                                    )
-                                    .show(ui, |ui| {
-                                        egui::Grid::new("textures")
-                                            .spacing([0.0, 0.0])
-                                            .max_col_width(256.0)
-                                            .show(ui, |ui| {
-                                                for (i, item) in item_manager
-                                                    .templates
-                                                    .iter()
-                                                    .filter_map(|x| {
-                                                        if let game_definitions::Template::Item(x) =
-                                                            x.value.as_ref().into()
-                                                        {
-                                                            return Some(x);
-                                                        }
-                                                        None
-                                                    })
-                                                    .take(1000)
-                                                    .enumerate()
-                                                {
-                                                    if let Some(atlas) = atlases
-                                                        .icon_map
-                                                        .iter()
-                                                        .find(|x| x.key == *item.icon)
-                                                        .map(|x| x.value)
-                                                        && let Some(uvs) = atlas
-                                                            .icons
-                                                            .iter()
-                                                            .find(|x| x.key == *item.icon)
-                                                            .map(|x| x.value)
-                                                    {
-                                                        egui::Frame::default().show(ui, |ui| {
-                                                            ui.add_sized(
-                                                                [64.0, 64.0],
-                                                                egui::Image::new((
-                                                                    egui::TextureId::User(
-                                                                        item.icon.index as _,
-                                                                    ),
-                                                                    egui::Vec2::new(64.0, 64.0),
-                                                                ))
-                                                                .uv([
-                                                                    [uvs.u1, uvs.v1].into(),
-                                                                    [uvs.u2, uvs.v2].into(),
-                                                                ]),
-                                                            );
-                                                        });
-                                                    }
-                                                    if ui
-                                                        .selectable_label(
-                                                            SELECTED == i,
-                                                            item.display_name
-                                                                .get()
-                                                                .as_deref()
-                                                                .unwrap_or(""),
-                                                        )
-                                                        .clicked()
-                                                    {
-                                                        SELECTED = i;
-                                                    }
-                                                    ui.end_row();
-                                                }
-                                            });
-                                        ui.allocate_space(ui.available_size());
-                                    });
-                            }
-                        },
-                    );
-                },
-            )
-        } else {
-            FullOutput::default()
-        }
-    }
-
-    unsafe fn draw_egui(&mut self, full_output: FullOutput, image: &SwapchainImageData) {
-        self.dev.cmd_bind_pipeline(
-            image.command_buffer,
-            vk::PipelineBindPoint::GRAPHICS,
-            self.pipeline,
-        );
-        self.dev.cmd_bind_vertex_buffers(image.command_buffer, 0, &[self.vertex_buf.buf], &[0]);
-        self.dev.cmd_bind_index_buffer(
-            image.command_buffer,
-            self.index_buf.buf,
-            0,
-            vk::IndexType::UINT32,
-        );
-
-        self.dev.cmd_push_constants(
-            image.command_buffer,
-            self.pipeline_layout,
-            vk::ShaderStageFlags::VERTEX,
-            0,
-            &1920f32.to_ne_bytes(),
-        );
-        self.dev.cmd_push_constants(
-            image.command_buffer,
-            self.pipeline_layout,
-            vk::ShaderStageFlags::VERTEX,
-            4,
-            &1080f32.to_ne_bytes(),
-        );
-
-        let clipped_primitives =
-            self.ctx.tessellate(full_output.shapes, full_output.pixels_per_point);
-
-        let index_buf_ptr = self.index_buf.mem.ptr as *mut u32;
-        let vertex_buf_ptr = self.vertex_buf.mem.ptr as *mut epaint::Vertex;
-
-        self.update_textures(full_output.textures_delta, image.command_buffer);
-
-        let mut index_base = 0;
-        let mut vertex_base = 0;
-        for primitive in clipped_primitives {
-            match primitive.primitive {
-                Primitive::Mesh(mesh) => {
-                    match mesh.texture_id {
-                        TextureId::Managed(_) => {
-                            self.dev.cmd_bind_descriptor_sets(
-                                image.command_buffer,
-                                vk::PipelineBindPoint::GRAPHICS,
-                                self.pipeline_layout,
-                                0,
-                                &[self.textures.get(&mesh.texture_id).unwrap().0],
-                                &[],
-                            );
-                        }
-                        TextureId::User(id) => {
-                            if let Some(texture_manager) = Globals::static_symbols()
-                                .ls__gGlobalResourceManager
-                                .and_then(|x| x.as_opt())
-                                .and_then(|x| x.as_opt())
-                                .and_then(|x| x.texture_manager.as_opt())
-                                && let Some(atlases) = Globals::static_symbols()
-                                    .ls__gTextureAtlasMap
-                                    .and_then(|x| x.as_opt())
-                                    .and_then(|x| x.as_opt())
-                            {
-                                let fstring = FixedString { index: id as _ };
-                                let Some(atlas_fstring) = atlases
-                                    .icon_map
-                                    .iter()
-                                    .find(|x| x.key == fstring)
-                                    .map(|x| x.value.name)
-                                else {
-                                    return;
-                                };
-                                let atlas = atlas_fstring.index;
-
-                                if let Some(dsc_set) =
-                                    self.dsc_sets.get(&atlas).copied().or_else(|| {
-                                        let view = texture_manager
-                                            .find(atlas_fstring)?
-                                            .vulkan
-                                            .image_views
-                                            .first()?
-                                            .view;
-
-                                        let dsc_set = self
-                                            .dev
-                                            .allocate_descriptor_sets(
-                                                &vk::DescriptorSetAllocateInfo::builder()
-                                                    .descriptor_pool(self.descriptor_pool)
-                                                    .set_layouts(&[self.descriptor_set_layout]),
-                                            )
-                                            .unwrap()[0];
-                                        self.dev.update_descriptor_sets(
-                                            &[*vk::WriteDescriptorSet::builder()
-                                                .dst_set(dsc_set)
-                                                .descriptor_type(
-                                                    vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-                                                )
-                                                .image_info(&[*vk::DescriptorImageInfo::builder(
-                                                )
-                                                .image_view(vk::ImageView::from_raw(view as _))
-                                                .image_layout(
-                                                    vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-                                                )
-                                                .sampler(self.sampler)])],
-                                            &[],
-                                        );
-                                        self.dsc_sets.insert(atlas, dsc_set);
-                                        Some(dsc_set)
-                                    })
-                                {
-                                    self.dev.cmd_bind_descriptor_sets(
-                                        image.command_buffer,
-                                        vk::PipelineBindPoint::GRAPHICS,
-                                        self.pipeline_layout,
-                                        0,
-                                        &[dsc_set],
-                                        &[],
-                                    );
-                                } else {
-                                    return;
-                                }
-                            }
-                            // if let Some(texture_manager) =
-                            // Globals::static_symbols()
-                            //     .ls__gGlobalResourceManager
-                            //     .and_then(|x| x.as_opt())
-                            //     .and_then(|x| x.as_opt())
-                            //     .and_then(|x| x.texture_manager.as_opt())
-                            // {
-                            //     let valid_views = texture_manager
-                            //         .texture_strings
-                            //         .iter()
-                            //         .filter(|(x, _)| !x.is_null())
-                            //         .flat_map(|(x, _)| x.image_views.iter())
-                            //         .filter(|x| x.view != 0)
-                            //         .collect::<Vec<_>>();
-                            //     let mut dsc_sets = DSC_SETS.lock().unwrap();
-                            //     if valid_views.len() != dsc_sets.len() {
-                            //         for dsc_set in dsc_sets.drain(..) {
-                            //             self.dev
-                            //
-                            // .free_descriptor_sets(self.descriptor_pool,
-                            // &[dsc_set])
-                            //                 .unwrap();
-                            //         }
-                            //
-                            //         for view in valid_views {
-                            //             let dsc_set = self
-                            //                 .dev
-                            //                 .allocate_descriptor_sets(
-                            //
-                            // &vk::DescriptorSetAllocateInfo::builder()
-                            //
-                            // .descriptor_pool(self.descriptor_pool)
-                            //
-                            // .set_layouts(&[self.descriptor_set_layout]),
-                            //                 )
-                            //                 .unwrap()[0];
-                            //             self.dev.update_descriptor_sets(
-                            //
-                            // &[*vk::WriteDescriptorSet::builder()
-                            //                     .dst_set(dsc_set)
-                            //                     .descriptor_type(
-                            //
-                            // vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-                            //                     )
-                            //
-                            // .image_info(&[*vk::DescriptorImageInfo::builder(
-                            //                     )
-                            //
-                            // .image_view(vk::ImageView::from_raw(view.view))
-                            //                     .image_layout(
-                            //
-                            // vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-                            //                     )
-                            //                     .sampler(self.sampler)])],
-                            //                 &[],
-                            //             );
-                            //             dsc_sets.push(dsc_set);
-                            //         }
-                            //     }
-                            //
-                            //     if let Some(dsc_set) = dsc_sets.get(id as
-                            // usize) {
-                            //         self.dev.cmd_bind_descriptor_sets(
-                            //             image.command_buffer,
-                            //             vk::PipelineBindPoint::GRAPHICS,
-                            //             self.pipeline_layout,
-                            //             0,
-                            //             &[*dsc_set],
-                            //             &[],
-                            //         );
-                            //     }
-                            // }
-                        }
-                    }
-
-                    index_buf_ptr
-                        .add(index_base)
-                        .copy_from_nonoverlapping(mesh.indices.as_ptr(), mesh.indices.len());
-                    vertex_buf_ptr
-                        .add(vertex_base)
-                        .copy_from_nonoverlapping(mesh.vertices.as_ptr(), mesh.vertices.len());
-
-                    let clip_rect = primitive.clip_rect;
-                    let min = clip_rect.min;
-                    let min = Pos2 {
-                        x: f32::clamp(min.x, 0.0, 1920.0),
-                        y: f32::clamp(min.y, 0.0, 1080.0),
-                    };
-                    let max = clip_rect.max;
-                    let max = Pos2 {
-                        x: f32::clamp(max.x, min.x, 1920.0),
-                        y: f32::clamp(max.y, min.y, 1080.0),
-                    };
-                    self.dev.cmd_set_scissor(image.command_buffer, 0, &[*vk::Rect2D::builder()
-                        .offset(vk::Offset2D { x: min.x.round() as i32, y: min.y.round() as i32 })
-                        .extent(vk::Extent2D {
-                            width: (max.x.round() - min.x) as u32,
-                            height: (max.y.round() - min.y) as u32,
-                        })]);
-                    self.dev.cmd_set_viewport(image.command_buffer, 0, &[*vk::Viewport::builder()
-                        .width(1920.0)
-                        .height(1080.0)
-                        .max_depth(1.0)]);
-                    self.dev.cmd_draw_indexed(
-                        image.command_buffer,
-                        mesh.indices.len() as _,
-                        1,
-                        index_base as _,
-                        vertex_base as _,
-                        0,
-                    );
-                    index_base += mesh.indices.len();
-                    vertex_base += mesh.vertices.len();
-                }
-                Primitive::Callback(_) => unimplemented!(),
-            }
-        }
-    }
-
-    unsafe fn update_textures(
-        &mut self,
-        textures_delta: TexturesDelta,
-        cmd_buf: vk::CommandBuffer,
-    ) {
-        for id in textures_delta.free {
-            self.free_texture(id);
-        }
-
-        // let mut dsc_sets = DSC_SETS.lock().unwrap();
-        // let views = ATLAS_VIEWS.lock().unwrap();
-        // if dsc_sets.len() < views.len() {
-        //     for image_view in views.iter() {
-        //         let dsc_set = self
-        //             .dev
-        //             .allocate_descriptor_sets(
-        //                 &vk::DescriptorSetAllocateInfo::builder()
-        //                     .descriptor_pool(self.descriptor_pool)
-        //                     .set_layouts(&[self.descriptor_set_layout]),
-        //             )
-        //             .unwrap()[0];
-        //         self.dev.update_descriptor_sets(
-        //             &[*vk::WriteDescriptorSet::builder()
-        //                 .dst_set(dsc_set)
-        //                 .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-        //                 .image_info(&[*vk::DescriptorImageInfo::builder()
-        //                     .image_view(*image_view)
-        //                     .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-        //                     .sampler(self.sampler)])],
-        //             &[],
-        //         );
-        //         dsc_sets.push(dsc_set);
-        //     }
-        // }
-
-        for (id, delta) in textures_delta.set {
-            if delta.is_whole() {
-                let image = Texture::new(&self.dev, &self.allocator, &delta.image);
-
-                let dsc_set = self
-                    .dev
-                    .allocate_descriptor_sets(
-                        &vk::DescriptorSetAllocateInfo::builder()
-                            .descriptor_pool(self.descriptor_pool)
-                            .set_layouts(&[self.descriptor_set_layout]),
-                    )
-                    .unwrap()[0];
-                self.dev.update_descriptor_sets(
-                    &[*vk::WriteDescriptorSet::builder()
-                        .dst_set(dsc_set)
-                        .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-                        .image_info(&[*vk::DescriptorImageInfo::builder()
-                            .image_view(image.view)
-                            .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-                            .sampler(self.sampler)])],
-                    &[],
-                );
-
-                self.apply_image_delta(&image, &delta, cmd_buf);
-                self.textures.insert(id, (dsc_set, image));
-            } else {
-                self.apply_image_delta(&self.textures[&id].1, &delta, cmd_buf);
-            }
-        }
-    }
-
-    unsafe fn apply_image_delta(
-        &self,
-        image: &Texture,
-        delta: &epaint::ImageDelta,
-        cmd_buf: vk::CommandBuffer,
-    ) {
-        let data = match &delta.image {
-            ImageData::Color(image) => {
-                image.pixels.iter().flat_map(|c| c.to_array()).collect::<Vec<_>>()
-            }
-            ImageData::Font(image) => {
-                image.srgba_pixels(None).flat_map(|c| c.to_array()).collect::<Vec<_>>()
-            }
-        };
-
-        let buf = Buffer::new(
-            &self.allocator,
-            &self.dev,
-            data.len(),
-            vk::BufferUsageFlags::TRANSFER_SRC,
-            vk::SharingMode::default(),
-            vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
-        );
-
-        let ptr = buf.mem.ptr;
-        ptr.copy_from_nonoverlapping(data.as_ptr() as _, data.len());
-
-        self.dev.cmd_copy_buffer_to_image(
-            cmd_buf,
-            buf.buf,
-            image.image,
-            vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-            &[*vk::BufferImageCopy::builder()
-                .buffer_row_length(delta.image.width() as _)
-                .buffer_image_height(delta.image.height() as _)
-                .image_subresource(
-                    *vk::ImageSubresourceLayers::builder()
-                        .aspect_mask(vk::ImageAspectFlags::COLOR)
-                        .layer_count(1),
-                )
-                .image_offset(
-                    delta
-                        .pos
-                        .map(|pos| vk::Offset3D { x: pos[0] as _, y: pos[1] as _, z: 0 })
-                        .unwrap_or_default(),
-                )
-                .image_extent(vk::Extent3D {
-                    width: delta.image.width() as _,
-                    height: delta.image.height() as _,
-                    depth: 1,
-                })],
-        );
-    }
-
-    unsafe fn free_texture(&mut self, id: TextureId) {
-        if let Some((_, (_, image))) = self.textures.remove_entry(&id) {
-            image.free(&self.dev)
-        }
-    }
-}
-
-#[derive(Clone)]
-struct VulkanDataBuilder<M: EguiMenu> {
-    instance: Option<ash::Instance>,
-    physical_dev: Option<vk::PhysicalDevice>,
-    dev: Option<ash::Device>,
-    queue_family: Option<u32>,
-    pipeline_cache: Option<vk::PipelineCache>,
-    swapchain_data: Option<SwapchainData>,
-    menu: Option<M>,
-}
-
-impl<M: EguiMenu> VulkanDataBuilder<M> {
-    pub const fn new() -> Self {
-        Self {
-            instance: None,
-            physical_dev: None,
-            dev: None,
-            queue_family: None,
-            pipeline_cache: None,
-            swapchain_data: None,
-            menu: None,
-        }
-    }
-
-    pub fn build(&mut self) -> VulkanData<M> {
-        let instance = self.instance.take().expect("Vulkan instance was not initialized");
-        let physical_dev =
-            self.physical_dev.take().expect("Vulkan physical device was not initialized");
-        let dev = self.dev.take().expect("Vulkan device was not initialized");
         let queue_family =
-            self.queue_family.take().expect("Vulkan queue family was not initialized");
-        let pipeline_cache =
-            self.pipeline_cache.take().expect("Vulkan pipeline cache was not initialized");
-        let swapchain_data =
-            self.swapchain_data.take().expect("Vulkan swapchain data was not initialized");
-        let menu = self.menu.take().expect("ImGui menu was not initialized");
+            families.iter().position(|x| x.queue_flags.contains(vk::QueueFlags::GRAPHICS)).unwrap()
+                as _;
 
-        unsafe {
-            let ctx = Context::default();
-            // menu.init(&mut ctx, &mut dev);
-            egui_backend_win32::init();
+        let queue = dev().get_device_queue(queue_family, 0);
 
-            let queue = dev.get_device_queue(queue_family, 0);
+        let info = vk::CommandPoolCreateInfo::builder()
+            .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER)
+            .queue_family_index(queue_family);
+        let cmd_pool = dev().create_command_pool(&info, None).unwrap();
 
-            let allocator = Allocator::new(&instance, physical_dev);
+        let textures = Textures::new();
 
-            let index_buf = Buffer::new(
-                &allocator,
-                &dev,
-                1024 * 1024 * 4,
-                vk::BufferUsageFlags::INDEX_BUFFER,
-                vk::SharingMode::EXCLUSIVE,
-                vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
-            );
+        let swapchain_data = ManuallyDrop::new(SwapchainData::new(
+            swapchain,
+            swapchain_create_info,
+            cmd_pool,
+            textures.dsc_set_layout,
+        ));
 
-            let vertex_buf = Buffer::new(
-                &allocator,
-                &dev,
-                1024 * 1024 * 4,
-                vk::BufferUsageFlags::VERTEX_BUFFER,
-                vk::SharingMode::EXCLUSIVE,
-                vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
-            );
+        Self { queue, cmd_pool, swapchain_data, textures, ctx }
+    }
 
-            let descriptor_pool = dev
-                .create_descriptor_pool(
-                    &vk::DescriptorPoolCreateInfo::builder()
-                        .flags(vk::DescriptorPoolCreateFlags::FREE_DESCRIPTOR_SET)
-                        .max_sets(1024)
-                        .pool_sizes(&[*vk::DescriptorPoolSize::builder()
-                            .ty(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-                            .descriptor_count(1024)]),
-                    None,
-                )
-                .unwrap();
+    unsafe fn present(&mut self, present_info: &mut vk::PresentInfoKHR) {
+        if present_info.swapchain_count != 1
+            || *present_info.p_swapchains != self.swapchain_data.swapchain
+        {
+            return;
+        }
 
-            let descriptor_set_layout = dev
-                .create_descriptor_set_layout(
-                    &vk::DescriptorSetLayoutCreateInfo::builder().bindings(&[
-                        *vk::DescriptorSetLayoutBinding::builder()
-                            .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-                            .descriptor_count(1)
-                            .binding(0)
-                            .stage_flags(vk::ShaderStageFlags::FRAGMENT),
-                    ]),
-                    None,
-                )
-                .unwrap();
+        let (full_output, screen_rect) = self.egui_run();
 
-            let pipeline_layout = dev
-                .create_pipeline_layout(
-                    &vk::PipelineLayoutCreateInfo::builder()
-                        .set_layouts(&[descriptor_set_layout])
-                        .push_constant_ranges(&[*vk::PushConstantRange::builder()
-                            .stage_flags(vk::ShaderStageFlags::VERTEX)
-                            .offset(0)
-                            .size(mem::size_of::<f32>() as u32 * 2)]),
-                    None,
-                )
-                .unwrap();
+        let image_idx = *present_info.p_image_indices as usize;
+        let image = &self.swapchain_data.images[image_idx];
+        dev().wait_for_fences(&[image.fence], true, u64::MAX).unwrap();
+        dev().reset_fences(&[image.fence]).unwrap();
+        dev().reset_command_buffer(image.cmd_buf, vk::CommandBufferResetFlags::empty()).unwrap();
 
-            let pipeline = create_pipeline(&dev, pipeline_layout, swapchain_data.render_pass);
-            let sampler = dev
-                .create_sampler(
-                    &vk::SamplerCreateInfo::builder()
-                        .address_mode_u(vk::SamplerAddressMode::CLAMP_TO_EDGE)
-                        .address_mode_v(vk::SamplerAddressMode::CLAMP_TO_EDGE)
-                        .address_mode_w(vk::SamplerAddressMode::CLAMP_TO_EDGE)
-                        .min_filter(vk::Filter::LINEAR)
-                        .mag_filter(vk::Filter::LINEAR)
-                        .mipmap_mode(vk::SamplerMipmapMode::LINEAR)
-                        .max_lod(vk::LOD_CLAMP_NONE),
-                    None,
-                )
-                .unwrap();
+        dev()
+            .begin_command_buffer(
+                image.cmd_buf,
+                &vk::CommandBufferBeginInfo::builder()
+                    .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT),
+            )
+            .unwrap();
 
-            VulkanData {
-                instance,
-                physical_dev,
-                dev,
-                queue_family,
-                queue,
-                pipeline_cache,
-                descriptor_pool,
-                swapchain_data,
+        let info = vk::RenderPassBeginInfo::builder()
+            .render_pass(self.swapchain_data.render_pass)
+            .framebuffer(image.framebuffer)
+            .render_area(*vk::Rect2D::builder().extent(self.swapchain_data.extent))
+            .clear_values(&[]);
+        dev().cmd_begin_render_pass(image.cmd_buf, &info, vk::SubpassContents::INLINE);
 
-                menu,
+        self.swapchain_data.draw_egui(
+            full_output.textures_delta,
+            self.ctx.tessellate(full_output.shapes, full_output.pixels_per_point),
+            image_idx,
+            &mut self.textures,
+            screen_rect,
+        );
+        let image = &self.swapchain_data.images[image_idx];
 
-                ctx,
-                allocator,
-                index_buf,
-                vertex_buf,
+        dev().cmd_end_render_pass(image.cmd_buf);
+        dev().end_command_buffer(image.cmd_buf).unwrap();
 
-                textures: HashMap::new(),
-                dsc_sets: HashMap::new(),
+        let signal_semaphores = [image.semaphore];
+        let command_buffers = [image.cmd_buf];
+        let mut submit_info = vk::SubmitInfo::builder()
+            .command_buffers(&command_buffers)
+            .wait_dst_stage_mask(&[
+                vk::PipelineStageFlags::ALL_COMMANDS,
+                vk::PipelineStageFlags::ALL_COMMANDS,
+                vk::PipelineStageFlags::ALL_COMMANDS,
+            ])
+            .signal_semaphores(&signal_semaphores);
+        submit_info.wait_semaphore_count = present_info.wait_semaphore_count;
+        submit_info.p_wait_semaphores = present_info.p_wait_semaphores;
 
-                descriptor_set_layout,
-                pipeline_layout,
-                pipeline,
-                sampler,
-            }
+        dev().queue_submit(self.queue, &[*submit_info], image.fence).unwrap();
+
+        *(present_info.p_wait_semaphores as *mut _) = *submit_info.p_signal_semaphores;
+        present_info.wait_semaphore_count = 1;
+    }
+
+    fn egui_run(&mut self) -> (FullOutput, egui::Rect) {
+        if let Ok(input) = egui_backend_win32::new_frame() {
+            let rect = input.screen_rect.unwrap();
+            (self.ctx.run(input, |ctx| menu().draw(ctx)), rect)
+        } else {
+            (FullOutput::default(), egui::Rect::ZERO)
         }
     }
+}
 
-    pub fn instance(&self) -> &ash::Instance {
-        self.instance.as_ref().unwrap()
+impl Drop for VkData {
+    fn drop(&mut self) {
+        unsafe {
+            ManuallyDrop::drop(&mut self.swapchain_data);
+            dev().destroy_command_pool(self.cmd_pool, None);
+        }
     }
 }
 
-fn create_pipeline(
-    dev: &ash::Device,
-    pipeline_layout: vk::PipelineLayout,
-    render_pass: vk::RenderPass,
-) -> vk::Pipeline {
-    let attributes = [
-        *vk::VertexInputAttributeDescription::builder()
-            .offset(0)
-            .location(0)
-            .format(vk::Format::R32G32_SFLOAT),
-        *vk::VertexInputAttributeDescription::builder()
-            .offset(8)
-            .location(1)
-            .format(vk::Format::R32G32_SFLOAT),
-        *vk::VertexInputAttributeDescription::builder()
-            .offset(16)
-            .location(2)
-            .format(vk::Format::R8G8B8A8_UNORM),
-    ];
+#[derive(Debug, Default)]
+struct Textures {
+    dsc_set_layout: vk::DescriptorSetLayout,
+    dsc_pool: vk::DescriptorPool,
+    sampler: vk::Sampler,
 
-    let bytes_code = include_bytes!("shaders/vert.spv");
-    let info = vk::ShaderModuleCreateInfo {
-        code_size: bytes_code.len(),
-        p_code: bytes_code.as_ptr() as _,
-        ..Default::default()
-    };
-    let vertex_shader_mod = unsafe { dev.create_shader_module(&info, None).unwrap() };
+    managed: HashMap<TextureId, Texture>,
+    game: HashMap<u32, vk::DescriptorSet>,
+}
 
-    let bytes_code = include_bytes!("shaders/frag.spv");
-    let info = vk::ShaderModuleCreateInfo {
-        code_size: bytes_code.len(),
-        p_code: bytes_code.as_ptr() as _,
-        ..Default::default()
-    };
-    let fragment_shader_mod = unsafe { dev.create_shader_module(&info, None).unwrap() };
+impl Textures {
+    unsafe fn new() -> Self {
+        let dsc_pool = dev()
+            .create_descriptor_pool(
+                &vk::DescriptorPoolCreateInfo::builder()
+                    .flags(vk::DescriptorPoolCreateFlags::FREE_DESCRIPTOR_SET)
+                    .max_sets(1024)
+                    .pool_sizes(&[*vk::DescriptorPoolSize::builder()
+                        .ty(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                        .descriptor_count(1024)]),
+                None,
+            )
+            .unwrap();
 
-    let main_function_name = c"main";
-    let pipeline_shader_stages = [
-        *vk::PipelineShaderStageCreateInfo::builder()
-            .stage(vk::ShaderStageFlags::VERTEX)
-            .module(vertex_shader_mod)
-            .name(main_function_name),
-        *vk::PipelineShaderStageCreateInfo::builder()
-            .stage(vk::ShaderStageFlags::FRAGMENT)
-            .module(fragment_shader_mod)
-            .name(main_function_name),
-    ];
+        let dsc_set_layout = dev()
+            .create_descriptor_set_layout(
+                &vk::DescriptorSetLayoutCreateInfo::builder().bindings(&[
+                    *vk::DescriptorSetLayoutBinding::builder()
+                        .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                        .descriptor_count(1)
+                        .binding(0)
+                        .stage_flags(vk::ShaderStageFlags::FRAGMENT),
+                ]),
+                None,
+            )
+            .unwrap();
 
-    let input_assembly_info = vk::PipelineInputAssemblyStateCreateInfo::builder()
-        .topology(vk::PrimitiveTopology::TRIANGLE_LIST);
-    let viewport_info =
-        vk::PipelineViewportStateCreateInfo::builder().viewport_count(1).scissor_count(1);
-    let rasterization_info = vk::PipelineRasterizationStateCreateInfo::builder().line_width(1.0);
-    let depth_stencil_info = vk::PipelineDepthStencilStateCreateInfo::builder()
-        .depth_compare_op(vk::CompareOp::ALWAYS)
-        .front(*vk::StencilOpState::builder().compare_op(vk::CompareOp::ALWAYS))
-        .back(*vk::StencilOpState::builder().compare_op(vk::CompareOp::ALWAYS));
-    let dynamic_states = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
-    let dynamic_state_info =
-        vk::PipelineDynamicStateCreateInfo::builder().dynamic_states(&dynamic_states);
-    let multisample_info = vk::PipelineMultisampleStateCreateInfo::builder()
-        .rasterization_samples(vk::SampleCountFlags::TYPE_1);
+        let sampler = dev()
+            .create_sampler(
+                &vk::SamplerCreateInfo::builder()
+                    .address_mode_u(vk::SamplerAddressMode::CLAMP_TO_EDGE)
+                    .address_mode_v(vk::SamplerAddressMode::CLAMP_TO_EDGE)
+                    .address_mode_w(vk::SamplerAddressMode::CLAMP_TO_EDGE)
+                    .min_filter(vk::Filter::LINEAR)
+                    .mag_filter(vk::Filter::LINEAR)
+                    .mipmap_mode(vk::SamplerMipmapMode::LINEAR)
+                    .max_lod(vk::LOD_CLAMP_NONE),
+                None,
+            )
+            .unwrap();
 
-    let pipeline = unsafe {
-        dev.create_graphics_pipelines(
-            vk::PipelineCache::null(),
-            &[*vk::GraphicsPipelineCreateInfo::builder()
-                .stages(&pipeline_shader_stages)
-                .vertex_input_state(
-                    &vk::PipelineVertexInputStateCreateInfo::builder()
-                        .vertex_attribute_descriptions(&attributes)
-                        .vertex_binding_descriptions(&[
-                            *vk::VertexInputBindingDescription::builder()
-                                .binding(0)
-                                .input_rate(vk::VertexInputRate::VERTEX)
-                                .stride(
-                                    4 * mem::size_of::<f32>() as u32
-                                        + 4 * mem::size_of::<u8>() as u32,
-                                ),
-                        ]),
-                )
-                .input_assembly_state(&input_assembly_info)
-                .viewport_state(&viewport_info)
-                .rasterization_state(&rasterization_info)
-                .multisample_state(&multisample_info)
-                .depth_stencil_state(&depth_stencil_info)
-                .color_blend_state(
-                    &vk::PipelineColorBlendStateCreateInfo::builder().attachments(&[
-                        *vk::PipelineColorBlendAttachmentState::builder()
-                            .color_write_mask(vk::ColorComponentFlags::RGBA)
-                            .blend_enable(true)
-                            .src_color_blend_factor(vk::BlendFactor::SRC_ALPHA)
-                            .dst_color_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)
-                            .src_alpha_blend_factor(vk::BlendFactor::ONE)
-                            .dst_alpha_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA),
-                    ]),
-                )
-                .dynamic_state(&dynamic_state_info)
-                .layout(pipeline_layout)
-                .render_pass(render_pass)],
-            None,
-        )
-        .unwrap()[0]
-    };
-    unsafe {
-        dev.destroy_shader_module(vertex_shader_mod, None);
-        dev.destroy_shader_module(fragment_shader_mod, None);
+        Self { dsc_set_layout, dsc_pool, sampler, managed: HashMap::new(), game: HashMap::new() }
     }
-    pipeline
-}
 
-#[derive(Debug)]
-struct Texture {
-    image: vk::Image,
-    view: vk::ImageView,
-    buf: Allocation,
-}
-
-impl Texture {
-    unsafe fn new(dev: &ash::Device, allocator: &Allocator, image_data: &ImageData) -> Texture {
+    unsafe fn create_texture(&mut self, id: TextureId, image_data: &ImageData) -> &mut Texture {
         let extent = vk::Extent3D {
             width: image_data.width() as _,
             height: image_data.height() as _,
             depth: 1,
         };
 
-        let image = dev
+        let image = dev()
             .create_image(
                 &vk::ImageCreateInfo::builder()
                     .extent(extent)
@@ -1257,12 +393,12 @@ impl Texture {
             )
             .unwrap();
 
-        let requirements = dev.get_image_memory_requirements(image);
-        let buf = allocator.alloc(dev, requirements, vk::MemoryPropertyFlags::DEVICE_LOCAL);
+        let requirements = dev().get_image_memory_requirements(image);
+        let buf = allocator().alloc(requirements, vk::MemoryPropertyFlags::DEVICE_LOCAL);
 
-        dev.bind_image_memory(image, buf.handle, 0).unwrap();
+        dev().bind_image_memory(image, buf.handle, 0).unwrap();
 
-        let view = dev
+        let view = dev()
             .create_image_view(
                 &vk::ImageViewCreateInfo::builder()
                     .components(vk::ComponentMapping::default())
@@ -1279,22 +415,127 @@ impl Texture {
             )
             .unwrap();
 
-        Self { image, view, buf }
+        let dsc_set = self.create_set(view);
+
+        let texture = Texture { image, view, dsc_set, buf };
+        self.managed.insert(id, texture);
+
+        self.managed.get_mut(&id).unwrap()
     }
 
-    unsafe fn free(self, dev: &ash::Device) {
-        dev.destroy_image_view(self.view, None);
-        dev.destroy_image(self.image, None);
-        self.buf.free(dev);
+    unsafe fn create_set(&mut self, view: vk::ImageView) -> vk::DescriptorSet {
+        let dsc_set = dev()
+            .allocate_descriptor_sets(
+                &vk::DescriptorSetAllocateInfo::builder()
+                    .descriptor_pool(self.dsc_pool)
+                    .set_layouts(&[self.dsc_set_layout]),
+            )
+            .unwrap()[0];
+        dev().update_descriptor_sets(
+            &[*vk::WriteDescriptorSet::builder()
+                .dst_set(dsc_set)
+                .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                .image_info(&[*vk::DescriptorImageInfo::builder()
+                    .image_view(view)
+                    .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                    .sampler(self.sampler)])],
+            &[],
+        );
+
+        dsc_set
+    }
+
+    fn free_texture(&mut self, id: TextureId) {
+        self.managed.remove_entry(&id);
     }
 }
 
-#[derive(Debug, Clone)]
+impl Drop for Textures {
+    fn drop(&mut self) {
+        unsafe {
+            dev().destroy_sampler(self.sampler, None);
+            dev().destroy_descriptor_pool(self.dsc_pool, None);
+            dev().destroy_descriptor_set_layout(self.dsc_set_layout, None);
+        }
+    }
+}
+
+#[derive(Debug)]
+struct Texture {
+    image: vk::Image,
+    view: vk::ImageView,
+    dsc_set: vk::DescriptorSet,
+    buf: Allocation<u8>,
+}
+
+impl Texture {
+    fn apply_delta(&self, delta: &epaint::ImageDelta, cmd_buf: vk::CommandBuffer) -> Buffer<u8> {
+        let data = match &delta.image {
+            ImageData::Color(image) => {
+                image.pixels.iter().flat_map(|c| c.to_array()).collect::<Vec<_>>()
+            }
+            ImageData::Font(image) => {
+                image.srgba_pixels(None).flat_map(|c| c.to_array()).collect::<Vec<_>>()
+            }
+        };
+
+        let mut buf = Buffer::<u8>::new(
+            data.len(),
+            vk::BufferUsageFlags::TRANSFER_SRC,
+            vk::SharingMode::default(),
+            vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
+        );
+
+        buf.as_slice_mut().copy_from_slice(&data);
+        unsafe {
+            dev().cmd_copy_buffer_to_image(
+                cmd_buf,
+                buf.buf,
+                self.image,
+                vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                &[*vk::BufferImageCopy::builder()
+                    .buffer_row_length(delta.image.width() as _)
+                    .buffer_image_height(delta.image.height() as _)
+                    .image_subresource(
+                        *vk::ImageSubresourceLayers::builder()
+                            .aspect_mask(vk::ImageAspectFlags::COLOR)
+                            .layer_count(1),
+                    )
+                    .image_offset(
+                        delta
+                            .pos
+                            .map(|pos| vk::Offset3D { x: pos[0] as _, y: pos[1] as _, z: 0 })
+                            .unwrap_or_default(),
+                    )
+                    .image_extent(vk::Extent3D {
+                        width: delta.image.width() as _,
+                        height: delta.image.height() as _,
+                        depth: 1,
+                    })],
+            );
+        }
+        buf
+    }
+}
+
+impl Drop for Texture {
+    fn drop(&mut self) {
+        unsafe {
+            dev().destroy_image_view(self.view, None);
+            dev().destroy_image(self.image, None);
+            dev().free_descriptor_sets(data().textures.dsc_pool, &[self.dsc_set]).unwrap();
+        }
+        allocator().free(&mut self.buf)
+    }
+}
+
+#[derive(Debug)]
 struct SwapchainData {
     swapchain: vk::SwapchainKHR,
     render_pass: vk::RenderPass,
-    command_pool: vk::CommandPool,
-    images: Vec<SwapchainImageData>,
+    pipeline_layout: vk::PipelineLayout,
+    pipeline: vk::Pipeline,
+    images: Vec<SwapchainImage>,
     extent: vk::Extent2D,
 }
 
@@ -1302,9 +543,8 @@ impl SwapchainData {
     pub unsafe fn new(
         swapchain: vk::SwapchainKHR,
         create_info: &vk::SwapchainCreateInfoKHR,
-        instance: &ash::Instance,
-        dev: &ash::Device,
-        queue_family: u32,
+        cmd_pool: vk::CommandPool,
+        dsc_set_layout: vk::DescriptorSetLayout,
     ) -> Self {
         let extent = create_info.image_extent;
 
@@ -1342,63 +582,341 @@ impl SwapchainData {
             .subpasses(&subpasses)
             .dependencies(&dependencies);
 
-        let render_pass = dev.create_render_pass(&render_pass, None).unwrap();
+        let render_pass = dev().create_render_pass(&render_pass, None).unwrap();
 
-        let info = vk::CommandPoolCreateInfo::builder()
-            .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER)
-            .queue_family_index(queue_family);
-        let command_pool = dev.create_command_pool(&info, None).unwrap();
+        let pipeline_layout = dev()
+            .create_pipeline_layout(
+                &vk::PipelineLayoutCreateInfo::builder()
+                    .set_layouts(&[dsc_set_layout])
+                    .push_constant_ranges(&[*vk::PushConstantRange::builder()
+                        .stage_flags(vk::ShaderStageFlags::VERTEX)
+                        .offset(0)
+                        .size(mem::size_of::<f32>() as u32 * 2)]),
+                None,
+            )
+            .unwrap();
 
-        let swapchain_khr = ash::extensions::khr::Swapchain::new(instance, dev);
+        let pipeline = Self::create_pipeline(pipeline_layout, render_pass);
 
+        let swapchain_khr = ash::extensions::khr::Swapchain::new(instance(), dev());
         let images = swapchain_khr
             .get_swapchain_images(swapchain)
             .unwrap()
             .into_iter()
             .map(|image| {
-                SwapchainImageData::new(
-                    dev,
-                    image,
-                    command_pool,
-                    render_pass,
-                    create_info.image_format,
-                    extent,
-                )
+                SwapchainImage::new(image, cmd_pool, render_pass, create_info.image_format, extent)
             })
             .collect();
 
-        Self { swapchain, render_pass, command_pool, images, extent }
+        Self { swapchain, render_pass, pipeline_layout, pipeline, images, extent }
     }
 
-    pub fn destroy(mut self, dev: &ash::Device) {
+    fn create_pipeline(
+        pipeline_layout: vk::PipelineLayout,
+        render_pass: vk::RenderPass,
+    ) -> vk::Pipeline {
+        let attributes = [
+            *vk::VertexInputAttributeDescription::builder()
+                .offset(0)
+                .location(0)
+                .format(vk::Format::R32G32_SFLOAT),
+            *vk::VertexInputAttributeDescription::builder()
+                .offset(8)
+                .location(1)
+                .format(vk::Format::R32G32_SFLOAT),
+            *vk::VertexInputAttributeDescription::builder()
+                .offset(16)
+                .location(2)
+                .format(vk::Format::R8G8B8A8_UNORM),
+        ];
+
+        let bytes_code = include_bytes!("shaders/vert.spv");
+        let info = vk::ShaderModuleCreateInfo {
+            code_size: bytes_code.len(),
+            p_code: bytes_code.as_ptr() as _,
+            ..Default::default()
+        };
+        let vertex_shader_mod = unsafe { dev().create_shader_module(&info, None).unwrap() };
+
+        let bytes_code = include_bytes!("shaders/frag.spv");
+        let info = vk::ShaderModuleCreateInfo {
+            code_size: bytes_code.len(),
+            p_code: bytes_code.as_ptr() as _,
+            ..Default::default()
+        };
+        let fragment_shader_mod = unsafe { dev().create_shader_module(&info, None).unwrap() };
+
+        let main_function_name = c"main";
+        let pipeline_shader_stages = [
+            *vk::PipelineShaderStageCreateInfo::builder()
+                .stage(vk::ShaderStageFlags::VERTEX)
+                .module(vertex_shader_mod)
+                .name(main_function_name),
+            *vk::PipelineShaderStageCreateInfo::builder()
+                .stage(vk::ShaderStageFlags::FRAGMENT)
+                .module(fragment_shader_mod)
+                .name(main_function_name),
+        ];
+
+        let input_assembly_info = vk::PipelineInputAssemblyStateCreateInfo::builder()
+            .topology(vk::PrimitiveTopology::TRIANGLE_LIST);
+        let viewport_info =
+            vk::PipelineViewportStateCreateInfo::builder().viewport_count(1).scissor_count(1);
+        let rasterization_info =
+            vk::PipelineRasterizationStateCreateInfo::builder().line_width(1.0);
+        let depth_stencil_info = vk::PipelineDepthStencilStateCreateInfo::builder()
+            .depth_compare_op(vk::CompareOp::ALWAYS)
+            .front(*vk::StencilOpState::builder().compare_op(vk::CompareOp::ALWAYS))
+            .back(*vk::StencilOpState::builder().compare_op(vk::CompareOp::ALWAYS));
+        let dynamic_states = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
+        let dynamic_state_info =
+            vk::PipelineDynamicStateCreateInfo::builder().dynamic_states(&dynamic_states);
+        let multisample_info = vk::PipelineMultisampleStateCreateInfo::builder()
+            .rasterization_samples(vk::SampleCountFlags::TYPE_1);
+
+        let pipeline = unsafe {
+            dev()
+                .create_graphics_pipelines(
+                    vk::PipelineCache::null(),
+                    &[*vk::GraphicsPipelineCreateInfo::builder()
+                        .stages(&pipeline_shader_stages)
+                        .vertex_input_state(
+                            &vk::PipelineVertexInputStateCreateInfo::builder()
+                                .vertex_attribute_descriptions(&attributes)
+                                .vertex_binding_descriptions(&[
+                                    *vk::VertexInputBindingDescription::builder()
+                                        .binding(0)
+                                        .input_rate(vk::VertexInputRate::VERTEX)
+                                        .stride(
+                                            4 * mem::size_of::<f32>() as u32
+                                                + 4 * mem::size_of::<u8>() as u32,
+                                        ),
+                                ]),
+                        )
+                        .input_assembly_state(&input_assembly_info)
+                        .viewport_state(&viewport_info)
+                        .rasterization_state(&rasterization_info)
+                        .multisample_state(&multisample_info)
+                        .depth_stencil_state(&depth_stencil_info)
+                        .color_blend_state(
+                            &vk::PipelineColorBlendStateCreateInfo::builder().attachments(&[
+                                *vk::PipelineColorBlendAttachmentState::builder()
+                                    .color_write_mask(vk::ColorComponentFlags::RGBA)
+                                    .blend_enable(true)
+                                    .src_color_blend_factor(vk::BlendFactor::SRC_ALPHA)
+                                    .dst_color_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)
+                                    .src_alpha_blend_factor(vk::BlendFactor::ONE)
+                                    .dst_alpha_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA),
+                            ]),
+                        )
+                        .dynamic_state(&dynamic_state_info)
+                        .layout(pipeline_layout)
+                        .render_pass(render_pass)],
+                    None,
+                )
+                .unwrap()[0]
+        };
         unsafe {
-            if self.render_pass != vk::RenderPass::null() {
-                dev.destroy_render_pass(self.render_pass, None);
-            }
+            dev().destroy_shader_module(vertex_shader_mod, None);
+            dev().destroy_shader_module(fragment_shader_mod, None);
+        }
+        pipeline
+    }
 
-            for i in self.images.drain(..) {
-                i.destroy(dev, self.command_pool);
-            }
+    unsafe fn update_textures(
+        &self,
+        textures_delta: TexturesDelta,
+        textures: &mut Textures,
+        cmd_buf: vk::CommandBuffer,
+        frame_end_fence: vk::Fence,
+    ) {
+        for id in textures_delta.free {
+            textures.free_texture(id);
+        }
 
-            if self.command_pool != vk::CommandPool::null() {
-                dev.destroy_command_pool(self.command_pool, None);
+        let mut staging_bufs = Vec::with_capacity(textures_delta.set.len());
+
+        for (id, delta) in textures_delta.set {
+            if delta.is_whole() {
+                let texture = textures.create_texture(id, &delta.image);
+                staging_bufs.push(texture.apply_delta(&delta, cmd_buf));
+            } else {
+                staging_bufs.push(textures.managed[&id].apply_delta(&delta, cmd_buf));
+            }
+        }
+
+        if !staging_bufs.is_empty() {
+            struct Wrapper<T>(T);
+            unsafe impl<T> Send for Wrapper<T> {}
+            unsafe impl<T> Sync for Wrapper<T> {}
+            let staging_bufs = Wrapper(staging_bufs);
+            std::thread::spawn(move || {
+                let mut _staging_bufs = staging_bufs;
+                dev().wait_for_fences(&[frame_end_fence], true, u64::MAX).unwrap();
+            });
+        }
+    }
+
+    unsafe fn draw_egui(
+        &mut self,
+        textures_delta: TexturesDelta,
+        primitives: Vec<egui::ClippedPrimitive>,
+        image_idx: usize,
+        textures: &mut Textures,
+        screen_rect: egui::Rect,
+    ) {
+        let image = &self.images[image_idx];
+
+        dev().cmd_bind_pipeline(image.cmd_buf, vk::PipelineBindPoint::GRAPHICS, self.pipeline);
+        dev().cmd_bind_index_buffer(image.cmd_buf, image.idx_buf.buf, 0, vk::IndexType::UINT32);
+        dev().cmd_bind_vertex_buffers(image.cmd_buf, 0, &[image.vtx_buf.buf], &[0]);
+
+        dev().cmd_push_constants(
+            image.cmd_buf,
+            self.pipeline_layout,
+            vk::ShaderStageFlags::VERTEX,
+            0,
+            &screen_rect.width().to_ne_bytes(),
+        );
+        dev().cmd_push_constants(
+            image.cmd_buf,
+            self.pipeline_layout,
+            vk::ShaderStageFlags::VERTEX,
+            4,
+            &screen_rect.height().to_ne_bytes(),
+        );
+
+        self.update_textures(textures_delta, textures, image.cmd_buf, image.fence);
+
+        let image = &mut self.images[image_idx];
+        let idx_buf = image.idx_buf.as_slice_mut();
+        let vtx_buf = image.vtx_buf.as_slice_mut();
+
+        let mut idx_base = 0;
+        let mut vtx_base = 0;
+        for primitive in primitives {
+            match primitive.primitive {
+                Primitive::Mesh(mesh) => {
+                    match mesh.texture_id {
+                        TextureId::Managed(_) => {
+                            dev().cmd_bind_descriptor_sets(
+                                image.cmd_buf,
+                                vk::PipelineBindPoint::GRAPHICS,
+                                self.pipeline_layout,
+                                0,
+                                &[textures.managed.get(&mesh.texture_id).unwrap().dsc_set],
+                                &[],
+                            );
+                        }
+                        TextureId::User(id) => {
+                            if let Some(texture_manager) = Globals::static_symbols()
+                                .ls__gGlobalResourceManager
+                                .and_then(|x| x.as_opt())
+                                .and_then(|x| x.as_opt())
+                                .and_then(|x| x.texture_manager.as_opt())
+                                && let Some(atlases) = Globals::static_symbols()
+                                    .ls__gTextureAtlasMap
+                                    .and_then(|x| x.as_opt())
+                                    .and_then(|x| x.as_opt())
+                            {
+                                let fstring = FixedString { index: id as _ };
+                                let Some(atlas_fstring) = atlases
+                                    .icon_map
+                                    .iter()
+                                    .find(|x| x.key == fstring)
+                                    .map(|x| x.value.name)
+                                else {
+                                    return;
+                                };
+                                let atlas = atlas_fstring.index;
+
+                                if let Some(dsc_set) =
+                                    textures.game.get(&atlas).copied().or_else(|| {
+                                        let view = texture_manager
+                                            .find(atlas_fstring)?
+                                            .vulkan
+                                            .image_views
+                                            .first()?
+                                            .view;
+
+                                        let dsc_set =
+                                            textures.create_set(vk::ImageView::from_raw(view as _));
+                                        textures.game.insert(atlas, dsc_set);
+                                        Some(dsc_set)
+                                    })
+                                {
+                                    dev().cmd_bind_descriptor_sets(
+                                        image.cmd_buf,
+                                        vk::PipelineBindPoint::GRAPHICS,
+                                        self.pipeline_layout,
+                                        0,
+                                        &[dsc_set],
+                                        &[],
+                                    );
+                                } else {
+                                    return;
+                                }
+                            }
+                        }
+                    }
+
+                    idx_buf[idx_base..idx_base + mesh.indices.len()].copy_from_slice(&mesh.indices);
+                    vtx_buf[vtx_base..vtx_base + mesh.vertices.len()]
+                        .copy_from_slice(&mesh.vertices);
+
+                    let clip_rect = primitive.clip_rect;
+                    let min = clip_rect.clamp(screen_rect.min);
+                    let max = clip_rect.clamp(screen_rect.max);
+                    dev().cmd_set_scissor(image.cmd_buf, 0, &[*vk::Rect2D::builder()
+                        .offset(vk::Offset2D { x: min.x.round() as i32, y: min.y.round() as i32 })
+                        .extent(vk::Extent2D {
+                            width: (max.x.round() - min.x) as u32,
+                            height: (max.y.round() - min.y) as u32,
+                        })]);
+                    dev().cmd_set_viewport(image.cmd_buf, 0, &[*vk::Viewport::builder()
+                        .width(screen_rect.width())
+                        .height(screen_rect.height())
+                        .max_depth(1.0)]);
+                    dev().cmd_draw_indexed(
+                        image.cmd_buf,
+                        mesh.indices.len() as _,
+                        1,
+                        idx_base as _,
+                        vtx_base as _,
+                        0,
+                    );
+                    idx_base += mesh.indices.len();
+                    vtx_base += mesh.vertices.len();
+                }
+                Primitive::Callback(_) => unimplemented!(),
             }
         }
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-struct SwapchainImageData {
+impl Drop for SwapchainData {
+    fn drop(&mut self) {
+        unsafe {
+            dev().destroy_pipeline_layout(self.pipeline_layout, None);
+            dev().destroy_pipeline(self.pipeline, None);
+            dev().destroy_render_pass(self.render_pass, None);
+        }
+    }
+}
+
+#[derive(Debug)]
+struct SwapchainImage {
     framebuffer: vk::Framebuffer,
     image_view: vk::ImageView,
-    command_buffer: vk::CommandBuffer,
+    idx_buf: Buffer<u32>,
+    vtx_buf: Buffer<epaint::Vertex>,
+    cmd_buf: vk::CommandBuffer,
     fence: vk::Fence,
     semaphore: vk::Semaphore,
 }
 
-impl SwapchainImageData {
-    pub unsafe fn new(
-        dev: &ash::Device,
+impl SwapchainImage {
+    unsafe fn new(
         image: vk::Image,
         command_pool: vk::CommandPool,
         render_pass: vk::RenderPass,
@@ -1409,13 +927,13 @@ impl SwapchainImageData {
             .level(vk::CommandBufferLevel::PRIMARY)
             .command_pool(command_pool)
             .command_buffer_count(1);
-        let command_buffer = dev.allocate_command_buffers(&info).unwrap()[0];
+        let cmd_buf = dev().allocate_command_buffers(&info).unwrap()[0];
 
         let info = vk::FenceCreateInfo::builder().flags(vk::FenceCreateFlags::SIGNALED);
-        let fence = dev.create_fence(&info, None).unwrap();
+        let fence = dev().create_fence(&info, None).unwrap();
 
         let info = vk::SemaphoreCreateInfo::default();
-        let semaphore = dev.create_semaphore(&info, None).unwrap();
+        let semaphore = dev().create_semaphore(&info, None).unwrap();
 
         let info = vk::ImageViewCreateInfo::builder()
             .image(image)
@@ -1433,7 +951,7 @@ impl SwapchainImageData {
                     .level_count(1)
                     .layer_count(1),
             );
-        let image_view = dev.create_image_view(&info, None).unwrap();
+        let image_view = dev().create_image_view(&info, None).unwrap();
 
         let attachments = [image_view];
         let info = vk::FramebufferCreateInfo::builder()
@@ -1443,42 +961,46 @@ impl SwapchainImageData {
             .height(extent.height)
             .layers(1);
 
-        let framebuffer = dev.create_framebuffer(&info, None).unwrap();
+        let framebuffer = dev().create_framebuffer(&info, None).unwrap();
 
-        Self { framebuffer, image_view, command_buffer, fence, semaphore }
+        let idx_buf = Buffer::new(
+            1024 * 1024 * 4,
+            vk::BufferUsageFlags::INDEX_BUFFER,
+            vk::SharingMode::EXCLUSIVE,
+            vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
+        );
+
+        let vtx_buf = Buffer::new(
+            1024 * 1024 * 4,
+            vk::BufferUsageFlags::VERTEX_BUFFER,
+            vk::SharingMode::EXCLUSIVE,
+            vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
+        );
+
+        Self { framebuffer, image_view, idx_buf, vtx_buf, cmd_buf, fence, semaphore }
     }
+}
 
-    pub fn destroy(self, dev: &ash::Device, command_pool: vk::CommandPool) {
+impl Drop for SwapchainImage {
+    fn drop(&mut self) {
         unsafe {
-            if self.framebuffer != vk::Framebuffer::null() {
-                dev.destroy_framebuffer(self.framebuffer, None);
-            }
-            if self.image_view != vk::ImageView::null() {
-                dev.destroy_image_view(self.image_view, None);
-            }
-            if self.command_buffer != vk::CommandBuffer::null() {
-                dev.free_command_buffers(command_pool, &[self.command_buffer]);
-            }
-            if self.fence != vk::Fence::null() {
-                dev.destroy_fence(self.fence, None);
-            }
-            if self.semaphore != vk::Semaphore::null() {
-                dev.destroy_semaphore(self.semaphore, None);
-            }
+            dev().destroy_framebuffer(self.framebuffer, None);
+            dev().destroy_image_view(self.image_view, None);
+            dev().free_command_buffers(data().cmd_pool, &[self.cmd_buf]);
+            dev().destroy_fence(self.fence, None);
+            dev().destroy_semaphore(self.semaphore, None);
         }
     }
 }
 
 #[derive(Debug)]
-pub(crate) struct Buffer {
+pub(crate) struct Buffer<T> {
     buf: vk::Buffer,
-    mem: Allocation,
+    mem: Allocation<T>,
 }
 
-impl Buffer {
-    pub fn new(
-        allocator: &Allocator,
-        dev: &ash::Device,
+impl<T> Buffer<T> {
+    fn new(
         size: usize,
         usage: vk::BufferUsageFlags,
         sharing_mode: vk::SharingMode,
@@ -1486,15 +1008,28 @@ impl Buffer {
     ) -> Self {
         let buffer_info =
             vk::BufferCreateInfo::builder().size(size as _).usage(usage).sharing_mode(sharing_mode);
-        let buf = unsafe { dev.create_buffer(&buffer_info, None).unwrap() };
+        let buf = unsafe { dev().create_buffer(&buffer_info, None).unwrap() };
 
-        let requirements = unsafe { dev.get_buffer_memory_requirements(buf) };
+        let requirements = unsafe { dev().get_buffer_memory_requirements(buf) };
 
-        let mem = allocator.alloc(dev, requirements, mem_props);
+        let mem = allocator().alloc(requirements, mem_props);
 
-        unsafe { dev.bind_buffer_memory(buf, mem.handle, 0).unwrap() };
+        unsafe { dev().bind_buffer_memory(buf, mem.handle, 0).unwrap() };
 
         Self { buf, mem }
+    }
+
+    fn as_slice_mut(&mut self) -> &mut [T] {
+        self.mem.as_slice_mut()
+    }
+}
+
+impl<T> Drop for Buffer<T> {
+    fn drop(&mut self) {
+        unsafe {
+            dev().destroy_buffer(self.buf, None);
+        }
+        allocator().free(&mut self.mem);
     }
 }
 
@@ -1504,31 +1039,47 @@ pub(crate) struct Allocator {
 }
 
 impl Allocator {
-    pub fn new(instance: &ash::Instance, physical_dev: vk::PhysicalDevice) -> Self {
+    pub fn new() -> Self {
         let physical_dev_mem_props =
-            unsafe { instance.get_physical_device_memory_properties(physical_dev) };
+            unsafe { instance().get_physical_device_memory_properties(physical_dev()) };
         Self { physical_dev_mem_props }
     }
 
-    pub fn alloc(
+    pub fn alloc<T>(
         &self,
-        dev: &ash::Device,
         requirements: vk::MemoryRequirements,
         memory_property_flags: vk::MemoryPropertyFlags,
-    ) -> Allocation {
+    ) -> Allocation<T> {
         let info = vk::MemoryAllocateInfo::builder()
             .allocation_size(requirements.size)
             .memory_type_index(self.mem_type(requirements, memory_property_flags).unwrap());
-        let handle = unsafe { dev.allocate_memory(&info, None).unwrap() };
+        let handle = unsafe { dev().allocate_memory(&info, None).unwrap() };
         let size = requirements.size;
 
         let is_mapped = !memory_property_flags.contains(vk::MemoryPropertyFlags::DEVICE_LOCAL);
         let ptr = if is_mapped {
-            unsafe { dev.map_memory(handle, 0, size, vk::MemoryMapFlags::empty()).unwrap() }
+            unsafe {
+                Some(
+                    NonNull::new(
+                        dev().map_memory(handle, 0, size, vk::MemoryMapFlags::empty()).unwrap()
+                            as _,
+                    )
+                    .unwrap(),
+                )
+            }
         } else {
-            ptr::null()
-        } as _;
-        Allocation { handle, size, ptr, is_mapped }
+            None
+        };
+        Allocation { handle, size: size / mem::size_of::<T>() as u64, ptr }
+    }
+
+    pub fn free<T>(&self, allocation: &mut Allocation<T>) {
+        unsafe {
+            if allocation.ptr.is_some() {
+                dev().unmap_memory(allocation.handle)
+            };
+            dev().free_memory(allocation.handle, None);
+        }
     }
 
     fn mem_type(
@@ -1550,20 +1101,16 @@ impl Allocator {
 }
 
 #[derive(Debug)]
-pub(crate) struct Allocation {
+pub(crate) struct Allocation<T> {
     handle: vk::DeviceMemory,
     size: u64,
-    ptr: *mut u8,
-    is_mapped: bool,
+    /// [`None`] if allocation is not mapped
+    ptr: Option<NonNull<T>>,
 }
 
-impl Allocation {
-    pub fn free(self, dev: &ash::Device) {
-        unsafe {
-            if self.is_mapped {
-                dev.unmap_memory(self.handle)
-            };
-            dev.free_memory(self.handle, None);
-        }
+impl<T> Allocation<T> {
+    fn as_slice_mut(&mut self) -> &mut [T] {
+        let ptr = self.ptr.expect("allocation is not mapped");
+        unsafe { std::slice::from_raw_parts_mut(ptr.as_ptr(), self.size as usize) }
     }
 }

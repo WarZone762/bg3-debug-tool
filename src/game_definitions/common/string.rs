@@ -8,7 +8,7 @@ use std::{
 use super::{map::GameHash, GamePtr};
 use crate::globals::Globals;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(C)]
 pub(crate) struct FixedString {
     pub index: u32,
